@@ -139,3 +139,7 @@ npm run typecheck
 npm run build
 npm run cli -- savings    # the CLI from source
 ```
+
+## License
+
+[MIT](LICENSE). Contains code adapted from picnic-api (MIT); see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

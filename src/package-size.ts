@@ -1,7 +1,7 @@
 import type { ComparisonUnit, PackageSize } from "./types.js";
 
-// The size grammar follows picnic-api's comparison-price module (MIT, Maarten van den Hoven),
-// which doesn't export its parser.
+// Adapted from picnic-api's src/domains/catalog/comparison-price.ts, which doesn't export its
+// parser. Copyright (c) 2021 MRVDH, MIT License; see THIRD_PARTY_NOTICES.md.
 
 /** Unit words in Dutch, German, French and English with their base unit and the factor to it. */
 const UNITS: [string, ComparisonUnit, number][] = [
