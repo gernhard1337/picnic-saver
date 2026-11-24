@@ -1,0 +1,59 @@
+{
+  "name": "picnic-saver",
+  "version": "0.1.0",
+  "description": "Find cheaper alternatives for the products in your Picnic cart and swap them, as a library and a CLI. Built on picnic-api. Not affiliated with Picnic.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    }
+  },
+  "bin": {
+    "picnic-saver": "./dist/cli.js"
+  },
+  "files": [
+    "dist",
+    ".env.example"
+  ],
+  "engines": {
+    "node": ">=20.12"
+  },
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "cli": "tsx src/cli/index.ts",
+    "prepublishOnly": "npm run typecheck && npm test && npm run build"
+  },
+  "keywords": [
+    "picnic",
+    "supermarket",
+    "savings",
+    "cart",
+    "cli"
+  ],
+  "dependencies": {
+    "@inquirer/prompts": "^8.8.1",
+    "commander": "^15.1.0",
+    "picnic-api": "^5.7.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "tsup": "^9.0.0",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3",
+    "vitest": "^5.1.1"
+  }
+}
