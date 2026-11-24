@@ -79,3 +79,11 @@ export function toCartSummary(cart: PicnicCart, ignore: IgnoreRule[] = []): Cart
     itemsTotal: items.reduce((sum, item) => sum + item.linePrice, 0),
   };
 }
+
+/**
+ * How many packages of a product are in the cart, over all its lines.
+ * @param recipeId Only count the lines of this recipe, or with `null` the lines outside recipes.
+ */
+export function quantityInCart(cart: CartSummary, productId: string, recipeId?: string | null): number {
+  return cart.items.filter((item) => item.productId === productId && (recipeId === undefined || item.recipeId === recipeId)).reduce((sum, item) => sum + item.quantity, 0);
+}

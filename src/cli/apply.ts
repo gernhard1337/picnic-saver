@@ -1,10 +1,10 @@
 import { select } from "@inquirer/prompts";
 import { PicnicSaverError, StaleSuggestionError, SwapFailedError } from "../errors.js";
-import { findSuggestion } from "../savings.js";
+import { findSuggestion, previewSwaps } from "../savings.js";
 import type { FindSavingsOptions, PicnicSaver } from "../saver.js";
-import { buildSuggestion } from "../suggestion.js";
-import type { CartItem, RemoveIgnoredResult, SavingsPlan, SwapOutcome, SwapPreview, SwapSuggestion } from "../types.js";
-import { formatIgnored, formatPlan, formatPreview, formatSuggestion, money, style } from "./format.js";
+import { selectSwaps } from "../selection.js";
+import type { RemoveIgnoredResult, SavingsPlan, SwapOutcome, SwapSuggestion } from "../types.js";
+import { formatIgnored, formatPlan, formatPreview, formatSuggestion, formatTotals, money, style } from "./format.js";
 
 export interface ApplyOptions {
   all?: boolean;
@@ -15,60 +15,14 @@ export interface ApplyOptions {
   json?: boolean;
 }
 
-/**
- * The suggestions `--all` and `--only` stand for.
- *
- * `--all` takes the cheapest allowed suggestion of every line. Search results need
- * `--include-search`. A line is never moved onto a product that is swapped away in the same run;
- * it goes where that product goes. With three sizes of the same potatoes in the cart, the two
- * more expensive ones both end up on the cheapest instead of one on the other. Such a redirected
- * suggestion is new, not one of the plan.
- */
+/** The suggestions `--all` and `--only` stand for. */
 export function selectSuggestions(plan: SavingsPlan, options: ApplyOptions): SwapSuggestion[] {
-  if (options.only) {
-    return options.only.map((id) => {
-      const suggestion = findSuggestion(plan, id);
-      if (!suggestion) throw new PicnicSaverError(`Unknown suggestion "${id}". Run "picnic-saver savings" for the current ids.`);
-      return suggestion;
-    });
-  }
-
-  const merges = options.consolidate ? plan.duplicates.flatMap((group) => group.consolidation) : [];
-  const lines = plan.lines
-    .map((line) => ({
-      line,
-      options: [...line.suggestions, ...merges.filter((merge) => merge.from.lineId === line.item.lineId)]
-        .filter((suggestion) => options.includeSearch || suggestion.source !== "search")
-        .sort((x, y) => x.to.basePrice.price - y.to.basePrice.price),
-    }))
-    .filter((entry) => entry.options.length > 0);
-
-  const inCart = new Map<string, number>();
-  for (const item of plan.cart.items) inCart.set(item.productId, (inCart.get(item.productId) ?? 0) + item.quantity);
-
-  // A target costs less per unit than the line it replaces, so going from the cheapest line up,
-  // it is known for every target whether it stays in the cart, and if not, where it goes.
-  const destination = new Map<string, SwapSuggestion>();
-  const chosen = new Map<string, SwapSuggestion>();
-  for (const entry of [...lines].sort((x, y) => (x.line.item.basePrice?.price ?? 0) - (y.line.item.basePrice?.price ?? 0))) {
-    const { item } = entry.line;
-    for (const option of entry.options) {
-      const onward = destination.get(option.to.productId);
-      const choice = onward ? redirect(item, onward, inCart.get(onward.to.productId) ?? 0) : option;
-      if (!choice || destination.has(choice.to.productId)) continue;
-      chosen.set(item.lineId, choice);
-      destination.set(item.productId, choice);
-      break;
-    }
-  }
-  return lines.flatMap((entry) => chosen.get(entry.line.item.lineId) ?? []).filter((suggestion) => !destination.has(suggestion.to.productId));
-}
-
-/** The suggestion to move `item` straight to where `onward` goes, or null when that isn't cheaper for it. */
-function redirect(item: CartItem, onward: SwapSuggestion, quantityInCart: number): SwapSuggestion | null {
-  const { to } = onward;
-  const candidate = { productId: to.productId, name: to.name, unitQuantity: to.unitQuantity, unitPrice: Math.round(to.linePrice / to.quantity), imageId: to.imageId, source: onward.source };
-  return buildSuggestion({ kind: "alternative", item, candidate, quantityInCart, minSavingPerUnit: 1 });
+  if (!options.only) return selectSwaps(plan, { includeSearch: options.includeSearch, includeMerges: options.consolidate });
+  return options.only.map((id) => {
+    const suggestion = findSuggestion(plan, id);
+    if (!suggestion) throw new PicnicSaverError(`Unknown suggestion "${id}". Run "picnic-saver savings" for the current ids.`);
+    return suggestion;
+  });
 }
 
 function printOutcomes(suggestions: SwapSuggestion[], outcomes: SwapOutcome[]): void {
@@ -80,12 +34,6 @@ function printOutcomes(suggestions: SwapSuggestion[], outcomes: SwapOutcome[]): 
   }
 }
 
-function printTotals(before: number, after: number): void {
-  const saving = before - after;
-  const effect = saving >= 0 ? `you save ${money(saving)}` : `${money(-saving)} more`;
-  console.log(`\nTotal: ${money(before)} → ${style("bold", money(after))} (${effect})`);
-}
-
 /** Prints what {@link PicnicSaver.removeIgnored} did. */
 export function printCleanup(cleanup: RemoveIgnoredResult): void {
   if (cleanup.removed.length > 0) console.log(formatIgnored(cleanup.removed, "Removed from your cart (ignore list)"));
@@ -94,14 +42,7 @@ export function printCleanup(cleanup: RemoveIgnoredResult): void {
 }
 
 async function applySelection(saver: PicnicSaver, plan: SavingsPlan, selected: SwapSuggestion[], options: ApplyOptions, cleanup: RemoveIgnoredResult | null = null): Promise<void> {
-  // Not previewSwaps: a redirected suggestion is not part of the plan.
-  const delta = selected.reduce((sum, suggestion) => sum + suggestion.linePriceDelta, 0);
-  const preview: SwapPreview = {
-    suggestionIds: selected.map((suggestion) => suggestion.id),
-    currentTotal: plan.cart.totalPrice,
-    estimatedTotal: plan.cart.totalPrice + delta,
-    estimatedSaving: delta === 0 ? 0 : -delta,
-  };
+  const preview = previewSwaps(plan, selected);
   if (options.dryRun) {
     if (options.json) return console.log(JSON.stringify({ dryRun: true, wouldRemove: plan.ignored, preview, suggestions: selected }, null, 2));
     console.log(style("bold", `Would swap ${selected.length} products:`));
@@ -113,7 +54,7 @@ async function applySelection(saver: PicnicSaver, plan: SavingsPlan, selected: S
   const result = await saver.applySwaps(selected);
   if (options.json) return console.log(JSON.stringify({ removed: cleanup?.removed ?? [], preview, result }, null, 2));
   printOutcomes(selected, result.outcomes);
-  printTotals(result.previousTotal, result.newTotal);
+  console.log(`\n${formatTotals(result.previousTotal, result.newTotal)}`);
 }
 
 async function reviewOneByOne(saver: PicnicSaver, plan: SavingsPlan, options: ApplyOptions): Promise<void> {
@@ -180,7 +121,7 @@ async function reviewOneByOne(saver: PicnicSaver, plan: SavingsPlan, options: Ap
   const verb = options.dryRun ? "would be swapped" : "swapped";
   console.log(`\n${counts.applied} ${verb}, ${counts.declined} declined${counts.failed ? `, ${counts.failed} failed` : ""}.`);
   if (!options.dryRun && counts.failed > 0) total = (await saver.getCart()).totalPrice;
-  printTotals(plan.cart.totalPrice, total);
+  console.log(formatTotals(plan.cart.totalPrice, total));
 }
 
 /**

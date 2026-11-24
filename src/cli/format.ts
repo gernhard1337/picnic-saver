@@ -100,3 +100,10 @@ export function formatPlan(plan: SavingsPlan): string {
   for (const warning of plan.warnings) parts.push(style("yellow", `Warning: ${warning}`));
   return parts.join("\n");
 }
+
+/** "€12.00 → €10.50 (you save €1.50)". */
+export function formatTotals(before: number, after: number): string {
+  const saving = before - after;
+  const effect = saving === 0 ? "unchanged" : saving > 0 ? `you save ${money(saving)}` : `${money(-saving)} more`;
+  return `Total: ${money(before)} → ${style("bold", money(after))} (${effect})`;
+}

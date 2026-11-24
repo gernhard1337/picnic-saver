@@ -4,7 +4,7 @@ import { similarProductsSource } from "./alternatives/similar.js";
 import type { AlternativeSource } from "./alternatives/source.js";
 import { applySwap, applySwaps, removeIgnored, type ApplySwapsOptions } from "./apply.js";
 import { toCartSummary, toPriceTiers } from "./cart.js";
-import { PicnicSaverError } from "./errors.js";
+import { errorMessage, PicnicSaverError } from "./errors.js";
 import { matchIgnoreRule, type IgnoreRule } from "./ignore.js";
 import { buildSavingsPlan, skipReason, type PlanOptions } from "./savings.js";
 import type { AlternativeCandidate, CartSummary, LoginResult, PicnicClientLike, ProductInfo, RemoveIgnoredResult, SavingsPlan, SwapResult, SwapSuggestion, SwapsResult } from "./types.js";
@@ -134,7 +134,7 @@ export class PicnicSaver {
     let throttled = false;
     const failed = (what: string, error: unknown) => {
       if (isThrottled(error)) throttled = true;
-      else warnings.push(`${what}: ${message(error)}`);
+      else warnings.push(`${what}: ${errorMessage(error)}`);
     };
 
     const pages = new Map<string, PicnicProduct>();
@@ -217,12 +217,6 @@ function toProductInfo(page: PicnicProduct): ProductInfo {
 /** Picnic's edge answers a throttled client with a 403 and an HTML page, so without an error code. */
 function isThrottled(error: unknown): boolean {
   return PicnicClient.isPicnicApiError(error) && error.code === null && (error.status === 403 || error.status === 429);
-}
-
-function message(error: unknown): string {
-  // The message of a PicnicApiError includes the whole response body.
-  if (PicnicClient.isPicnicApiError(error)) return `Picnic answered with status ${error.status}${error.code ? ` (${error.code})` : ""}`;
-  return error instanceof Error ? error.message : String(error);
 }
 
 /** Runs `task` for every item with at most `limit` running at once. */

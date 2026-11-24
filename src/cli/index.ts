@@ -2,12 +2,12 @@ import { resolve } from "node:path";
 import { input, password } from "@inquirer/prompts";
 import { Command, Option } from "commander";
 import PicnicClient from "picnic-api";
-import { PicnicSaverError } from "../errors.js";
+import { errorMessage, PicnicSaverError } from "../errors.js";
 import { PicnicSaver, type FindSavingsOptions } from "../saver.js";
 import { printCleanup, runApply, type ApplyOptions } from "./apply.js";
 import { isUnignoredInGit, readEnvFile, updateEnvFile } from "./env-file.js";
 import { describeIgnoreRule, type IgnoreRule } from "../ignore.js";
-import { formatCart, formatIgnored, formatPlan, money, style } from "./format.js";
+import { formatCart, formatIgnored, formatPlan, formatTotals, style } from "./format.js";
 import { addIgnoreRules, readIgnoreFile, removeIgnoreRules, writeIgnoreFile } from "./ignore-file.js";
 
 type CountryCode = "DE" | "NL" | "FR";
@@ -106,18 +106,14 @@ function collect(value: string, previous: string[]): string[] {
   return [...previous, value];
 }
 
-function formatTotal(before: number, after: number): string {
-  return `${money(before)} → ${style("bold", money(after))}`;
-}
-
 function explain(error: unknown): string {
   if (PicnicClient.isPicnicApiError(error)) {
     if (error.code === "AUTH_INVALID_CRED") return "Wrong e-mail address or password.";
     if (error.code === "OTP_NOT_VALID") return "That code is not valid.";
     if (error.status === 401) return 'Your login has expired. Run "picnic-saver login" again.';
-    return `Picnic answered with an error (${error.status}${error.code ? ` ${error.code}` : ""}).`;
+    if (error.status === 403 && !error.code) return "Picnic refuses requests at the moment (too many in a short time). Wait a few minutes and try again.";
   }
-  return error instanceof Error ? error.message : String(error);
+  return errorMessage(error);
 }
 
 const program = new Command()
@@ -189,7 +185,7 @@ program
     if (options.json) return console.log(JSON.stringify(cleanup, null, 2));
     if (cleanup.removed.length + cleanup.failed.length === 0) return console.log("Nothing on your ignore list is in the cart.");
     printCleanup(cleanup);
-    console.log(`Total: ${formatTotal(cleanup.previousTotal, cleanup.newTotal)}`);
+    console.log(formatTotals(cleanup.previousTotal, cleanup.newTotal));
   });
 
 const ignore = program.command("ignore").description("manage the list of products you never want in your cart");

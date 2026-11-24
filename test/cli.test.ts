@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { selectSuggestions } from "../src/cli/apply.js";
 import { isUnignoredInGit, readEnvFile, updateEnvFile } from "../src/cli/env-file.js";
 import { addIgnoreRules, readIgnoreFile, removeIgnoreRules, writeIgnoreFile } from "../src/cli/ignore-file.js";
-import { PicnicSaver } from "../src/index.js";
+import { PicnicSaver, previewSwaps, selectSwaps } from "../src/index.js";
 import { FakePicnic } from "./fake-picnic.js";
 
 function tempDir(): string {
@@ -84,10 +84,14 @@ describe("selectSuggestions", () => {
       { small: 1, medium: 1, large: 1, fancy: 1, sweet: 1 },
     );
     const saver = new PicnicSaver({ client: fake.client });
-    const selected = selectSuggestions(await saver.findSavings({ sources: ["similar"] }), { all: true });
+    const plan = await saver.findSavings({ sources: ["similar"] });
+    const selected = selectSwaps(plan);
     // "fancy" knows only "medium" and "sweet" only "fancy"; both follow them to "large".
     expect(ids(selected)).toEqual(["small:large", "medium:large", "fancy:large", "sweet:large"]);
     expect(selected[3]).toMatchObject({ to: { quantity: 1, linePrice: 260, alreadyInCart: true }, linePriceDelta: -240 });
+
+    // The preview takes suggestions that are not part of the plan, such as the redirected ones.
+    expect(previewSwaps(plan, selected)).toMatchObject({ currentTotal: 1693, estimatedTotal: 1300, estimatedSaving: 393 });
 
     const result = await saver.applySwaps(selected);
     expect(result.outcomes.map((outcome) => outcome.status)).toEqual(["applied", "applied", "applied", "applied"]);

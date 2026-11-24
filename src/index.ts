@@ -1,12 +1,13 @@
 export { PicnicSaver, type FindSavingsOptions, type PicnicSaverOptions } from "./saver.js";
 export { buildSavingsPlan, previewSwaps, findSuggestion, allSuggestions, type PlanInput, type PlanOptions } from "./savings.js";
+export { selectSwaps, type SelectSwapsOptions } from "./selection.js";
 export { findDuplicates, type DuplicateOptions } from "./duplicates.js";
 export { applySwap, applySwaps, removeIgnored, type ApplySwapsOptions } from "./apply.js";
 export { matchIgnoreRule, parseIgnoreList, describeIgnoreRule, type IgnoreRule } from "./ignore.js";
-export { toCartSummary } from "./cart.js";
+export { quantityInCart, toCartSummary } from "./cart.js";
 export { parsePackageSize } from "./package-size.js";
 export { similarProductsSource } from "./alternatives/similar.js";
 export { searchSource, type SearchSourceOptions } from "./alternatives/search.js";
 export type { AlternativeContext, AlternativeSource } from "./alternatives/source.js";
-export { PicnicSaverError, InvalidSelectionError, StaleSuggestionError, SwapFailedError } from "./errors.js";
+export { errorMessage, PicnicSaverError, InvalidSelectionError, StaleSuggestionError, SwapFailedError } from "./errors.js";
 export type * from "./types.js";

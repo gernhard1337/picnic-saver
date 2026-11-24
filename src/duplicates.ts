@@ -1,3 +1,4 @@
+import { quantityInCart } from "./cart.js";
 import { nameKey } from "./names.js";
 import { buildSuggestion } from "./suggestion.js";
 import type { AlternativeCandidate, CartItem, CartSummary, DuplicateGroup, DuplicateItem, ProductInfo, SwapSuggestion } from "./types.js";
@@ -74,10 +75,10 @@ function buildGroup(members: CartItem[], reasons: Reason[], cart: CartSummary, p
   const consolidation: SwapSuggestion[] = [];
   if (spread !== null) {
     const target = consolidationTarget(cheapest, products[cheapest.productId]);
-    const quantityInCart = cart.items.filter((item) => item.productId === cheapest.productId).reduce((sum, item) => sum + item.quantity, 0);
+    const inCart = quantityInCart(cart, cheapest.productId);
     for (const item of comparable.slice(1)) {
       if (item.recipeId && options.includeRecipeItems === false) continue;
-      const suggestion = buildSuggestion({ kind: "consolidate", item, candidate: target, quantityInCart, minSavingPerUnit: options.minSavingPerUnit ?? 1 });
+      const suggestion = buildSuggestion({ kind: "consolidate", item, candidate: target, quantityInCart: inCart, minSavingPerUnit: options.minSavingPerUnit ?? 1 });
       if (suggestion) consolidation.push(suggestion);
     }
   }

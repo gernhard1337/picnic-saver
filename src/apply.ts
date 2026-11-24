@@ -1,15 +1,7 @@
-import { toCartSummary } from "./cart.js";
+import { quantityInCart, toCartSummary } from "./cart.js";
+import { errorMessage, StaleSuggestionError, SwapFailedError } from "./errors.js";
 import type { IgnoreRule } from "./ignore.js";
-import { StaleSuggestionError, SwapFailedError } from "./errors.js";
 import type { CartSummary, PicnicClientLike, RemoveIgnoredResult, SwapOutcome, SwapResult, SwapSuggestion, SwapsResult } from "./types.js";
-
-function quantityOf(cart: CartSummary, productId: string, recipeId?: string | null): number {
-  return cart.items.filter((item) => item.productId === productId && (recipeId === undefined || item.recipeId === recipeId)).reduce((sum, item) => sum + item.quantity, 0);
-}
-
-function describe(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
 
 /**
  * Applies one suggestion to the cart. Picnic has no swap, so the new product is added first and
@@ -22,21 +14,21 @@ function describe(error: unknown): string {
 export async function applySwap(client: PicnicClientLike, suggestion: SwapSuggestion, options: { ignore?: IgnoreRule[] } = {}): Promise<SwapResult> {
   const { from, to } = suggestion;
   const before = toCartSummary(await client.cart.getCart(), options.ignore);
-  const present = quantityOf(before, from.productId, from.recipeId);
+  const present = quantityInCart(before, from.productId, from.recipeId);
   if (present !== from.quantity) {
     const found = present === 0 ? "is no longer in the cart" : `is in the cart ${present} times, not ${from.quantity}`;
     throw new StaleSuggestionError(suggestion.id, `"${from.name}" ${found}. Run the analysis again.`);
   }
 
-  const expected = quantityOf(before, to.productId) + to.quantity;
+  const expected = quantityInCart(before, to.productId) + to.quantity;
   let added: CartSummary;
   try {
     added = toCartSummary(await client.cart.addProductToCart(to.productId, to.quantity));
   } catch (error) {
-    throw new SwapFailedError(suggestion.id, "add", true, `Could not add "${to.name}": ${describe(error)}`, { cause: error });
+    throw new SwapFailedError(suggestion.id, "add", true, `Could not add "${to.name}": ${errorMessage(error)}`, { cause: error });
   }
 
-  const inCart = quantityOf(added, to.productId);
+  const inCart = quantityInCart(added, to.productId);
   if (inCart !== expected) {
     const surplus = inCart - (expected - to.quantity);
     const rolledBack = surplus <= 0 || (await undo(client, to.productId, surplus));
@@ -48,7 +40,7 @@ export async function applySwap(client: PicnicClientLike, suggestion: SwapSugges
     after = toCartSummary(await client.cart.removeProductFromCart(from.productId, from.quantity), options.ignore);
   } catch (error) {
     const rolledBack = await undo(client, to.productId, to.quantity);
-    throw new SwapFailedError(suggestion.id, "remove", rolledBack, `Could not remove "${from.name}": ${describe(error)}`, { cause: error });
+    throw new SwapFailedError(suggestion.id, "remove", rolledBack, `Could not remove "${from.name}": ${errorMessage(error)}`, { cause: error });
   }
 
   return {
@@ -122,7 +114,7 @@ export async function removeIgnored(client: PicnicClientLike, ignore: IgnoreRule
       result.cart = toCartSummary(await client.cart.removeProductFromCart(item.productId, item.quantity), ignore);
       result.removed.push(item);
     } catch (error) {
-      result.failed.push({ item, reason: describe(error) });
+      result.failed.push({ item, reason: errorMessage(error) });
     }
   }
   result.newTotal = result.cart.totalPrice;

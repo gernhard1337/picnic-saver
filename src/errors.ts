@@ -1,3 +1,14 @@
+import PicnicClient from "picnic-api";
+
+/**
+ * A short description of any thrown value. For picnic-api's `PicnicApiError` it gives the status
+ * and Picnic's error code, not the message, which contains the whole response body.
+ */
+export function errorMessage(error: unknown): string {
+  if (PicnicClient.isPicnicApiError(error)) return `Picnic answered with status ${error.status}${error.code ? ` (${error.code})` : ""}`;
+  return error instanceof Error ? error.message : String(error);
+}
+
 /** Base class of the errors this library throws itself. Errors of picnic-api pass through as they are. */
 export class PicnicSaverError extends Error {
   constructor(message: string, options?: ErrorOptions) {

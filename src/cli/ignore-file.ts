@@ -1,5 +1,5 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { PicnicSaverError } from "../errors.js";
+import { errorMessage, PicnicSaverError } from "../errors.js";
 import { parseIgnoreList, type IgnoreRule } from "../ignore.js";
 
 /** Reads the ignore list from a JSON file. A missing file is an empty list. */
@@ -8,7 +8,7 @@ export function readIgnoreFile(path: string): IgnoreRule[] {
   try {
     return parseIgnoreList(JSON.parse(readFileSync(path, "utf8")));
   } catch (error) {
-    throw new PicnicSaverError(`Can't read the ignore list in ${path}: ${error instanceof Error ? error.message : String(error)}`);
+    throw new PicnicSaverError(`Can't read the ignore list in ${path}: ${errorMessage(error)}`);
   }
 }
 

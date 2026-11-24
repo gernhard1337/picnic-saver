@@ -1,3 +1,4 @@
+import { quantityInCart } from "./cart.js";
 import { findDuplicates } from "./duplicates.js";
 import { InvalidSelectionError } from "./errors.js";
 import { buildSuggestion, byCheapest } from "./suggestion.js";
@@ -46,8 +47,6 @@ export function skipReason(item: CartItem, options: PlanOptions = {}): SkipReaso
  * `to.alreadyInCart: true`; applying it raises the quantity of that line.
  */
 export function buildSavingsPlan({ cart, candidates, products = {}, warnings = [], options = {} }: PlanInput): SavingsPlan {
-  const inCart = new Map<string, number>();
-  for (const item of cart.items) inCart.set(item.productId, (inCart.get(item.productId) ?? 0) + item.quantity);
   const usedIds = new Set<string>();
   const uniqueId = (suggestion: SwapSuggestion): SwapSuggestion => {
     let id = suggestion.id;
@@ -64,7 +63,7 @@ export function buildSavingsPlan({ cart, candidates, products = {}, warnings = [
     let searchCount = 0;
     const suggestions = (candidates[item.lineId] ?? [])
       .filter((candidate) => !seen.has(candidate.productId) && seen.add(candidate.productId))
-      .flatMap((candidate) => buildSuggestion({ kind: "alternative", item, candidate, quantityInCart: inCart.get(candidate.productId) ?? 0, minSavingPerUnit: options.minSavingPerUnit ?? 1 }) ?? [])
+      .flatMap((candidate) => buildSuggestion({ kind: "alternative", item, candidate, quantityInCart: quantityInCart(cart, candidate.productId), minSavingPerUnit: options.minSavingPerUnit ?? 1 }) ?? [])
       .sort(byCheapest)
       .filter((suggestion) => suggestion.source !== "search" || ++searchCount <= (options.maxSearchSuggestionsPerLine ?? 3))
       .slice(0, options.maxSuggestionsPerLine ?? 5)
@@ -102,22 +101,23 @@ export function findSuggestion(plan: SavingsPlan, id: string): SwapSuggestion | 
 /**
  * Computes the cart total after a set of suggestions, without touching the cart.
  *
- * @param plan The plan the suggestions come from.
- * @param suggestionIds The suggestions to apply. Default: the recommended one of every line.
+ * @param plan The plan the suggestions were made for.
+ * @param selection Suggestions, or ids of suggestions in the plan. Default: the recommended
+ *   suggestion of every line.
  * @throws {InvalidSelectionError} For an unknown id, or two suggestions for the same cart line.
  */
-export function previewSwaps(plan: SavingsPlan, suggestionIds: string[] = plan.suggestions.map((suggestion) => suggestion.id)): SwapPreview {
+export function previewSwaps(plan: SavingsPlan, selection: Array<string | SwapSuggestion> = plan.suggestions): SwapPreview {
   const lines = new Set<string>();
   let delta = 0;
-  for (const id of suggestionIds) {
-    const suggestion = findSuggestion(plan, id);
-    if (!suggestion) throw new InvalidSelectionError(`Unknown suggestion "${id}".`);
+  for (const entry of selection) {
+    const suggestion = typeof entry === "string" ? findSuggestion(plan, entry) : entry;
+    if (!suggestion) throw new InvalidSelectionError(`Unknown suggestion "${entry}".`);
     if (lines.has(suggestion.from.lineId)) throw new InvalidSelectionError(`More than one suggestion selected for "${suggestion.from.name}".`);
     lines.add(suggestion.from.lineId);
     delta += suggestion.linePriceDelta;
   }
   return {
-    suggestionIds: [...suggestionIds],
+    suggestionIds: selection.map((entry) => (typeof entry === "string" ? entry : entry.id)),
     currentTotal: plan.cart.totalPrice,
     estimatedTotal: plan.cart.totalPrice + delta,
     estimatedSaving: delta === 0 ? 0 : -delta,
