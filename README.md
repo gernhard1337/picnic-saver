@@ -8,6 +8,7 @@ What it does:
 2. Reads the cart with its total.
 3. Checks every cart line for products that cost less per kilogram, litre or piece, points out duplicates (milk and organic milk in the same cart), and estimates the new total.
 4. Swaps the products you choose, one at a time or all at once.
+5. Removes products you never want from the cart, such as the parsley every recipe adds, based on an ignore list.
 
 Requires Node.js 20.12 or newer.
 
@@ -20,6 +21,8 @@ picnic-saver login            # asks for e-mail, password and, if needed, the SM
 picnic-saver cart             # the cart and its total
 picnic-saver savings          # suggestions, duplicates, estimated total; changes nothing
 picnic-saver apply            # swap: all at once, or asked one by one
+picnic-saver clean            # remove the products on your ignore list
+picnic-saver ignore add "Petersilie"
 picnic-saver logout
 ```
 
@@ -37,8 +40,33 @@ picnic-saver logout
 | `--no-search` | Don't search; only use the similar products Picnic lists. |
 | `--include-recipes` | Also check products that belong to a recipe (swapping removes them from the recipe). |
 | `--json` | Print JSON (`cart`, `savings`, and `apply` with `--all` or `--only`). |
+| `--ignore-file <path>` | The ignore list to use. Default: `picnic-saver.ignore.json` in the current directory. |
+| `--no-ignore` | Leave the ignore list out for this run. |
 | `--country <code>` | `DE` (default), `NL` or `FR`. |
 | `--env-file <path>` | The .env file to use. Default: `.env` in the current directory. |
+
+### Ignore list
+
+Products on the ignore list are removed from the cart, also when a recipe put them there.
+
+```sh
+picnic-saver ignore add "Petersilie" "Dill frisch"   # by name
+picnic-saver ignore add --id s1001524 --note "have it in the garden"
+picnic-saver ignore remove "Petersilie"
+picnic-saver ignore                                  # show the list
+```
+
+The list is a JSON file, `picnic-saver.ignore.json` in the current directory, which you can also edit by hand:
+
+```json
+{
+  "ignore": ["Petersilie", { "productId": "s1001524", "note": "have it in the garden" }]
+}
+```
+
+- A name matches every product that has all of its words as whole words, in any order and without regard to case: `Petersilie` matches "Bio Petersilie glatt", but not "Petersilienwurzel".
+- A `productId` matches exactly one product; `cart --json` shows the ids.
+- `apply` removes ignored products before it looks for savings, and `clean` does only that. `cart` and `savings` change nothing and mark these products; so do `apply --dry-run` and `clean --dry-run`.
 
 ### Login and the .env file
 
@@ -87,6 +115,26 @@ console.log(result.newTotal, result.actualSaving);
 
 Works from ESM and CommonJS and ships its types.
 
+### Ignore list
+
+Pass the products you never want in the cart to the constructor, or assign `saver.ignore` later:
+
+```ts
+import { PicnicSaver, parseIgnoreList } from "picnic-saver";
+
+const saver = new PicnicSaver({ authKey, ignore: ["Petersilie", { productId: "s1001524" }] });
+
+const cart = await saver.getCart();            // matching lines have `ignored: true`
+const plan = await saver.findSavings();        // they are in `plan.ignored` and get no suggestions
+const result = await saver.removeIgnored();    // takes them out of the cart
+console.log(result.removed, result.newTotal);
+
+// To use the CLI's JSON file:
+saver.ignore = parseIgnoreList(JSON.parse(await readFile("picnic-saver.ignore.json", "utf8")));
+```
+
+Only `removeIgnored()` changes the cart; `getCart()` and `findSavings()` just flag the lines, so you decide when the removal happens. Ignored products are also never suggested as an alternative. See the CLI section for how names match.
+
 ### The plan
 
 `findSavings()` returns a `SavingsPlan`, which is plain JSON, so you can send it to a frontend and pass single suggestions back later:
@@ -96,6 +144,7 @@ Works from ESM and CommonJS and ships its types.
 | `cart` | The cart the plan was made for. |
 | `lines` | One entry per cart line: all its `suggestions` (cheapest per unit first), the `recommended` one, or why it was `skipped`. |
 | `suggestions` | The recommended suggestion of every line that has one. |
+| `ignored` | The cart lines on the ignore list. |
 | `duplicates` | Groups of lines that are the same kind of product at different prices, each with `consolidation` suggestions. |
 | `summary` | Current total, estimated total and saving when all of `suggestions` are applied. |
 | `warnings` | Problems that didn't stop the analysis, such as a product page that couldn't be read. |
@@ -149,7 +198,7 @@ Picnic has no "swap" and no dry run. `applySwap(suggestion)` adds the new produc
 ### More
 
 - `saver.client` is the picnic-api client, for delivery slots, checkout and everything else. You can also pass your own: `new PicnicSaver({ client })`.
-- The pure functions are exported for use without a `PicnicSaver`: `buildSavingsPlan`, `findDuplicates`, `previewSwaps`, `findSuggestion`, `allSuggestions`, `parsePackageSize`, `toCartSummary`.
+- The pure functions are exported for use without a `PicnicSaver`: `buildSavingsPlan`, `findDuplicates`, `previewSwaps`, `findSuggestion`, `allSuggestions`, `matchIgnoreRule`, `parseIgnoreList`, `parsePackageSize`, `toCartSummary`.
 - Errors from Picnic are picnic-api's `PicnicApiError`, with `status` and `code` (`AUTH_INVALID_CRED` for wrong credentials, `OTP_NOT_VALID` for a wrong code, status 401 for an expired session).
 
 ## Limits

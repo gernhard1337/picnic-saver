@@ -1,6 +1,7 @@
 import { toCartSummary } from "./cart.js";
+import type { IgnoreRule } from "./ignore.js";
 import { StaleSuggestionError, SwapFailedError } from "./errors.js";
-import type { CartSummary, PicnicClientLike, SwapOutcome, SwapResult, SwapSuggestion, SwapsResult } from "./types.js";
+import type { CartSummary, PicnicClientLike, RemoveIgnoredResult, SwapOutcome, SwapResult, SwapSuggestion, SwapsResult } from "./types.js";
 
 function quantityOf(cart: CartSummary, productId: string, recipeId?: string | null): number {
   return cart.items.filter((item) => item.productId === productId && (recipeId === undefined || item.recipeId === recipeId)).reduce((sum, item) => sum + item.quantity, 0);
@@ -18,9 +19,9 @@ function describe(error: unknown): string {
  * The cart is read first. When the line the suggestion replaces is gone or has another quantity,
  * nothing is changed and a {@link StaleSuggestionError} is thrown; other lines may have changed.
  */
-export async function applySwap(client: PicnicClientLike, suggestion: SwapSuggestion): Promise<SwapResult> {
+export async function applySwap(client: PicnicClientLike, suggestion: SwapSuggestion, options: { ignore?: IgnoreRule[] } = {}): Promise<SwapResult> {
   const { from, to } = suggestion;
-  const before = toCartSummary(await client.cart.getCart());
+  const before = toCartSummary(await client.cart.getCart(), options.ignore);
   const present = quantityOf(before, from.productId, from.recipeId);
   if (present !== from.quantity) {
     const found = present === 0 ? "is no longer in the cart" : `is in the cart ${present} times, not ${from.quantity}`;
@@ -44,7 +45,7 @@ export async function applySwap(client: PicnicClientLike, suggestion: SwapSugges
 
   let after: CartSummary;
   try {
-    after = toCartSummary(await client.cart.removeProductFromCart(from.productId, from.quantity));
+    after = toCartSummary(await client.cart.removeProductFromCart(from.productId, from.quantity), options.ignore);
   } catch (error) {
     const rolledBack = await undo(client, to.productId, to.quantity);
     throw new SwapFailedError(suggestion.id, "remove", rolledBack, `Could not remove "${from.name}": ${describe(error)}`, { cause: error });
@@ -71,6 +72,8 @@ async function undo(client: PicnicClientLike, productId: string, quantity: numbe
 export interface ApplySwapsOptions {
   /** Stop at the first suggestion that fails instead of going on with the rest. Default: false. */
   stopOnError?: boolean;
+  /** The ignore list, to flag ignored lines in the returned cart. */
+  ignore?: IgnoreRule[];
 }
 
 /**
@@ -84,7 +87,7 @@ export async function applySwaps(client: PicnicClientLike, suggestions: SwapSugg
 
   for (const suggestion of suggestions) {
     try {
-      const result = await applySwap(client, suggestion);
+      const result = await applySwap(client, suggestion, options);
       previousTotal ??= result.previousTotal;
       cart = result.cart;
       outcomes.push({ suggestionId: suggestion.id, status: "applied" });
@@ -101,7 +104,27 @@ export async function applySwaps(client: PicnicClientLike, suggestions: SwapSugg
     }
   }
 
-  cart ??= toCartSummary(await client.cart.getCart());
+  cart ??= toCartSummary(await client.cart.getCart(), options.ignore);
   previousTotal ??= cart.totalPrice;
   return { outcomes, cart, previousTotal, newTotal: cart.totalPrice, actualSaving: previousTotal - cart.totalPrice };
+}
+
+/**
+ * Takes every cart line that is on the ignore list out of the cart, whatever its quantity and
+ * also when it belongs to a recipe. A line Picnic refuses to remove ends up in `failed`.
+ */
+export async function removeIgnored(client: PicnicClientLike, ignore: IgnoreRule[]): Promise<RemoveIgnoredResult> {
+  const before = toCartSummary(await client.cart.getCart(), ignore);
+  const result: RemoveIgnoredResult = { removed: [], failed: [], cart: before, previousTotal: before.totalPrice, newTotal: before.totalPrice };
+
+  for (const item of before.items.filter((candidate) => candidate.ignored)) {
+    try {
+      result.cart = toCartSummary(await client.cart.removeProductFromCart(item.productId, item.quantity), ignore);
+      result.removed.push(item);
+    } catch (error) {
+      result.failed.push({ item, reason: describe(error) });
+    }
+  }
+  result.newTotal = result.cart.totalPrice;
+  return result;
 }

@@ -1,4 +1,5 @@
 import type PicnicClient from "picnic-api";
+import { matchIgnoreRule, type IgnoreRule } from "./ignore.js";
 import { parsePackageSize } from "./package-size.js";
 import { basePriceOf } from "./pricing.js";
 import type { CartItem, CartSummary, PriceTier } from "./types.js";
@@ -11,8 +12,12 @@ export function toPriceTiers(ranges: PicnicPriceRange[] | null | undefined): Pri
   return (ranges ?? []).map((range) => ({ price: range.price, fromQuantity: range.from_quantity }));
 }
 
-/** Converts a picnic-api cart into a {@link CartSummary}. Lines with a quantity of 0 are left out. */
-export function toCartSummary(cart: PicnicCart): CartSummary {
+/**
+ * Converts a picnic-api cart into a {@link CartSummary}. Lines with a quantity of 0 are left out.
+ * @param cart The cart from picnic-api.
+ * @param ignore The ignore list; matching lines get `ignored: true`.
+ */
+export function toCartSummary(cart: PicnicCart, ignore: IgnoreRule[] = []): CartSummary {
   const items = cart.items
     .filter((line) => line.quantity > 0)
     .map((line): CartItem => {
@@ -31,6 +36,7 @@ export function toCartSummary(cart: PicnicCart): CartSummary {
         imageId: line.imageId,
         isUnavailable: line.isUnavailable,
         recipeId: line.recipeId,
+        ignored: matchIgnoreRule({ productId: line.productId, name: line.name }, ignore) !== null,
       };
     });
   return {

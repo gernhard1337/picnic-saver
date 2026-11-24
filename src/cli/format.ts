@@ -1,5 +1,5 @@
 import { styleText } from "node:util";
-import type { BasePrice, CartSummary, DuplicateGroup, SavingsPlan, SwapPreview, SwapSuggestion } from "../types.js";
+import type { BasePrice, CartItem, CartSummary, DuplicateGroup, SavingsPlan, SwapPreview, SwapSuggestion } from "../types.js";
 
 type Style = Parameters<typeof styleText>[0];
 
@@ -27,7 +27,7 @@ export function formatCart(cart: CartSummary): string {
   const names = cart.items.map((item) => `${item.quantity} × ${item.name} (${item.unitQuantity})`);
   const width = Math.max(...names.map((name) => name.length));
   const lines = cart.items.map((item, index) => {
-    const note = item.isUnavailable ? style("yellow", "  unavailable") : style("dim", `  ${basePrice(item.basePrice)}`);
+    const note = item.ignored ? style("yellow", "  on your ignore list") : item.isUnavailable ? style("yellow", "  unavailable") : style("dim", `  ${basePrice(item.basePrice)}`);
     return `  ${pad(names[index]!, width)}  ${money(item.linePrice).padStart(8)}${note}`;
   });
   return [style("bold", `Cart (${cart.totalCount} products)`), ...lines, "", `Total: ${style("bold", money(cart.totalPrice))} (including deposits and fees)`].join("\n");
@@ -69,6 +69,12 @@ export function formatDuplicate(group: DuplicateGroup): string {
   return lines.join("\n");
 }
 
+/** The lines on the ignore list and what they cost together. */
+export function formatIgnored(items: CartItem[], heading: string): string {
+  const total = items.reduce((sum, item) => sum + item.linePrice, 0);
+  return [style("bold", heading), ...items.map((item) => `  ${item.quantity} × ${item.name} (${item.unitQuantity})  ${money(item.linePrice)}`), `  Together: ${money(total)}`].join("\n");
+}
+
 export function formatPreview(preview: SwapPreview): string {
   const effect = preview.estimatedSaving >= 0 ? `saves about ${money(preview.estimatedSaving)}` : `costs about ${money(-preview.estimatedSaving)} more`;
   return [`Current total:    ${money(preview.currentTotal)}`, `Estimated total:  ${style("bold", money(preview.estimatedTotal))}  (${effect})`].join("\n");
@@ -76,6 +82,9 @@ export function formatPreview(preview: SwapPreview): string {
 
 export function formatPlan(plan: SavingsPlan): string {
   const parts: string[] = [];
+  if (plan.ignored.length > 0) {
+    parts.push(formatIgnored(plan.ignored, 'On your ignore list (removed by "apply" and "clean")'), "");
+  }
   if (plan.duplicates.length > 0) {
     parts.push(style("bold", "Possible duplicates"), ...plan.duplicates.map(formatDuplicate), "");
   }

@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { selectSuggestions } from "../src/cli/apply.js";
 import { isUnignoredInGit, readEnvFile, updateEnvFile } from "../src/cli/env-file.js";
+import { addIgnoreRules, readIgnoreFile, removeIgnoreRules, writeIgnoreFile } from "../src/cli/ignore-file.js";
 import { PicnicSaver } from "../src/index.js";
 import { FakePicnic } from "./fake-picnic.js";
 
@@ -70,5 +71,28 @@ describe("selectSuggestions", () => {
   it("resolves --only ids and rejects unknown ones", async () => {
     expect(ids(selectSuggestions(await plan(), { only: ["milk-bio:milk"] }))).toEqual(["milk-bio:milk"]);
     await expect(plan().then((result) => selectSuggestions(result, { only: ["x"] }))).rejects.toThrow(/Unknown suggestion "x"/);
+  });
+});
+
+describe("ignore file", () => {
+  it("reads a missing file as an empty list and round-trips rules", () => {
+    const path = join(tempDir(), "ignore.json");
+    expect(readIgnoreFile(path)).toEqual([]);
+    writeIgnoreFile(path, ["Petersilie", { productId: "s1" }]);
+    expect(JSON.parse(readFileSync(path, "utf8"))).toEqual({ ignore: ["Petersilie", { productId: "s1" }] });
+    expect(readIgnoreFile(path)).toEqual(["Petersilie", { productId: "s1" }]);
+  });
+
+  it("names the file when it is broken", () => {
+    const path = join(tempDir(), "ignore.json");
+    writeFileSync(path, "{ nope");
+    expect(() => readIgnoreFile(path)).toThrow(path);
+  });
+
+  it("adds without duplicates and removes by name or id", () => {
+    const { rules, added } = addIgnoreRules(["Petersilie"], ["petersilie ", "Dill", { productId: "s1" }, { productId: "s1" }]);
+    expect(rules).toEqual(["Petersilie", "Dill", { productId: "s1" }]);
+    expect(added).toEqual(["Dill", { productId: "s1" }]);
+    expect(removeIgnoreRules(rules, ["DILL"], ["s1"])).toEqual({ rules: ["Petersilie"], removed: ["Dill", { productId: "s1" }] });
   });
 });

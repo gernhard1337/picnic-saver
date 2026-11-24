@@ -1,7 +1,8 @@
 export { PicnicSaver, type FindSavingsOptions, type PicnicSaverOptions } from "./saver.js";
 export { buildSavingsPlan, previewSwaps, findSuggestion, allSuggestions, type PlanInput, type PlanOptions } from "./savings.js";
 export { findDuplicates, type DuplicateOptions } from "./duplicates.js";
-export { applySwap, applySwaps, type ApplySwapsOptions } from "./apply.js";
+export { applySwap, applySwaps, removeIgnored, type ApplySwapsOptions } from "./apply.js";
+export { matchIgnoreRule, parseIgnoreList, describeIgnoreRule, type IgnoreRule } from "./ignore.js";
 export { toCartSummary } from "./cart.js";
 export { parsePackageSize } from "./package-size.js";
 export { similarProductsSource } from "./alternatives/similar.js";

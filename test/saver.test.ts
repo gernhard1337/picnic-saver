@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { InvalidSelectionError, PicnicSaver, StaleSuggestionError, SwapFailedError, previewSwaps } from "../src/index.js";
+import { InvalidSelectionError, PicnicSaver, StaleSuggestionError, SwapFailedError, matchIgnoreRule, parseIgnoreList, previewSwaps, type IgnoreRule } from "../src/index.js";
 import { FakePicnic, type FakeProduct } from "./fake-picnic.js";
 
 const catalog: FakeProduct[] = [
@@ -235,5 +235,71 @@ describe("applySwaps", () => {
       ["pasta-own", 2],
     ]);
     expect(result).toMatchObject({ previousTotal: 398 + 109 + 145, newTotal: 178 + 218, actualSaving: 256 });
+  });
+});
+
+describe("ignore list", () => {
+  const herbs: FakeProduct[] = [
+    { id: "parsley", name: "Bio Petersilie glatt", unitQuantity: "1 Stück", price: 129, recipeId: "r1", similar: ["parsley-cheap"] },
+    { id: "parsley-cheap", name: "Petersilie", unitQuantity: "1 Stück", price: 99 },
+    { id: "root", name: "Petersilienwurzel", unitQuantity: "500 g", price: 249 },
+    { id: "milk", name: "Vollmilch", unitQuantity: "1 l", price: 109, similar: ["oat"] },
+    { id: "oat", name: "Haferdrink", unitQuantity: "1 l", price: 95 },
+  ];
+  function herbCart(ignore: IgnoreRule[]) {
+    const fake = new FakePicnic(herbs, { parsley: 2, root: 1, milk: 1 });
+    return { fake, saver: new PicnicSaver({ client: fake.client, ignore }) };
+  }
+
+  it("matches whole words of the name, or the product id", () => {
+    const parsley = { productId: "parsley", name: "Bio Petersilie glatt" };
+    expect(matchIgnoreRule(parsley, ["petersilie"])).toBe("petersilie");
+    expect(matchIgnoreRule(parsley, ["glatt Petersilie"])).not.toBeNull();
+    expect(matchIgnoreRule({ productId: "root", name: "Petersilienwurzel" }, ["Petersilie"])).toBeNull();
+    expect(matchIgnoreRule(parsley, [{ productId: "parsley" }])).toEqual({ productId: "parsley" });
+    expect(matchIgnoreRule(parsley, [{ productId: "other", name: "Petersilie" }, "Schnittlauch", {}, ""])).toBeNull();
+  });
+
+  it("validates a list from JSON", () => {
+    expect(parseIgnoreList({ ignore: ["Petersilie", { productId: "s1", note: "never" }] })).toEqual(["Petersilie", { productId: "s1", note: "never" }]);
+    expect(parseIgnoreList(["a"])).toEqual(["a"]);
+    expect(() => parseIgnoreList({ items: [] })).toThrow(/must be an array/);
+    expect(() => parseIgnoreList([{ note: "x" }])).toThrow(/rule 1/);
+    expect(() => parseIgnoreList([42])).toThrow(/rule 1/);
+  });
+
+  it("flags ignored lines in the cart and keeps them out of the plan", async () => {
+    const { fake, saver } = herbCart(["Petersilie"]);
+    expect((await saver.getCart()).items.map((item) => item.ignored)).toEqual([true, false, false]);
+
+    const plan = await saver.findSavings({ sources: ["similar"], includeRecipeItems: true });
+    expect(plan.ignored.map((item) => item.productId)).toEqual(["parsley"]);
+    expect(plan.lines[0]).toMatchObject({ skipped: "ignored", suggestions: [] });
+    expect(fake.calls).not.toContain("product parsley");
+    expect([...fake.quantities.keys()]).toEqual(["parsley", "root", "milk"]);
+  });
+
+  it("never suggests an ignored product as an alternative", async () => {
+    const { saver } = herbCart(["Haferdrink"]);
+    const plan = await saver.findSavings({ sources: ["similar"] });
+    expect(plan.suggestions).toEqual([]);
+  });
+
+  it("removes ignored lines, also those of a recipe", async () => {
+    const { fake, saver } = herbCart(["Petersilie"]);
+    const result = await saver.removeIgnored();
+    expect(result.removed.map((item) => [item.productId, item.quantity])).toEqual([["parsley", 2]]);
+    expect(result).toMatchObject({ failed: [], previousTotal: 258 + 249 + 109, newTotal: 249 + 109 });
+    expect([...fake.quantities.keys()]).toEqual(["root", "milk"]);
+  });
+
+  it("reports what could not be removed and does nothing without rules", async () => {
+    const { fake, saver } = herbCart([]);
+    expect(await saver.removeIgnored()).toMatchObject({ removed: [], failed: [] });
+    saver.ignore = [{ productId: "milk" }];
+    fake.failRemove = "always";
+    const result = await saver.removeIgnored();
+    expect(result.failed).toMatchObject([{ item: { productId: "milk" }, reason: "remove rejected" }]);
+    expect(result.newTotal).toBe(result.previousTotal);
   });
 });

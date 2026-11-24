@@ -1,4 +1,5 @@
 import type PicnicClient from "picnic-api";
+import type { IgnoreRule } from "./ignore.js";
 
 /** The base unit two products are compared in: per kilogram, per litre or per piece. */
 export type ComparisonUnit = "kg" | "l" | "piece";
@@ -47,6 +48,8 @@ export interface CartItem {
   isUnavailable: boolean;
   /** The recipe the line belongs to, or null. */
   recipeId: string | null;
+  /** True when the product is on the ignore list ({@link IgnoreRule}). */
+  ignored: boolean;
 }
 
 /** The cart with its total. All amounts are in cents. */
@@ -153,7 +156,7 @@ export interface SwapSuggestion {
 }
 
 /** Why no suggestions were looked up for a cart line. */
-export type SkipReason = "unavailable" | "recipe" | "no-comparable-size";
+export type SkipReason = "ignored" | "unavailable" | "recipe" | "no-comparable-size";
 
 /** The suggestions for one cart line. */
 export interface LineSavings {
@@ -227,6 +230,11 @@ export interface SavingsPlan {
   /** The recommended suggestion of every line that has one. */
   suggestions: SwapSuggestion[];
   duplicates: DuplicateGroup[];
+  /**
+   * The cart lines on the ignore list. They get no suggestions and are left out of `duplicates`;
+   * {@link PicnicSaver.removeIgnored} takes them out of the cart.
+   */
+  ignored: CartItem[];
   /** The preview for all of `suggestions`. */
   summary: SwapPreview;
   /** Problems that didn't stop the analysis, e.g. a product page that couldn't be read. */
@@ -258,6 +266,18 @@ export interface SwapsResult {
   previousTotal: number;
   newTotal: number;
   actualSaving: number;
+}
+
+/** The result of {@link PicnicSaver.removeIgnored}. */
+export interface RemoveIgnoredResult {
+  /** The lines that were taken out of the cart. */
+  removed: CartItem[];
+  /** The lines Picnic refused to remove. */
+  failed: Array<{ item: CartItem; reason: string }>;
+  /** The cart afterwards. */
+  cart: CartSummary;
+  previousTotal: number;
+  newTotal: number;
 }
 
 /** The result of {@link PicnicSaver.login}. */

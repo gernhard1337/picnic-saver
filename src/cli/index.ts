@@ -4,14 +4,19 @@ import { Command, Option } from "commander";
 import PicnicClient from "picnic-api";
 import { PicnicSaverError } from "../errors.js";
 import { PicnicSaver, type FindSavingsOptions } from "../saver.js";
-import { runApply, type ApplyOptions } from "./apply.js";
+import { printCleanup, runApply, type ApplyOptions } from "./apply.js";
 import { isUnignoredInGit, readEnvFile, updateEnvFile } from "./env-file.js";
-import { formatCart, formatPlan, style } from "./format.js";
+import { describeIgnoreRule, type IgnoreRule } from "../ignore.js";
+import { formatCart, formatIgnored, formatPlan, money, style } from "./format.js";
+import { addIgnoreRules, readIgnoreFile, removeIgnoreRules, writeIgnoreFile } from "./ignore-file.js";
 
 type CountryCode = "DE" | "NL" | "FR";
 
 interface GlobalOptions {
   envFile: string;
+  ignoreFile: string;
+  /** False with --no-ignore. */
+  ignore: boolean;
   country?: CountryCode;
 }
 
@@ -34,7 +39,7 @@ function loggedInSaver(options: GlobalOptions): PicnicSaver {
   const session = loadSession(options);
   const authKey = session.env.PICNIC_AUTH_KEY;
   if (!authKey) throw new PicnicSaverError('Not logged in. Run "picnic-saver login" first.');
-  return new PicnicSaver({ countryCode: session.countryCode, authKey });
+  return new PicnicSaver({ countryCode: session.countryCode, authKey, ignore: options.ignore ? readIgnoreFile(resolve(options.ignoreFile)) : [] });
 }
 
 function requireTerminal(what: string): void {
@@ -96,6 +101,14 @@ function findOptions(options: SavingsOptions): FindSavingsOptions {
   return { sources: options.search ? ["similar", "search"] : ["similar"], includeRecipeItems: options.includeRecipes };
 }
 
+function collect(value: string, previous: string[]): string[] {
+  return [...previous, value];
+}
+
+function formatTotal(before: number, after: number): string {
+  return `${money(before)} → ${style("bold", money(after))}`;
+}
+
 function explain(error: unknown): string {
   if (PicnicClient.isPicnicApiError(error)) {
     if (error.code === "AUTH_INVALID_CRED") return "Wrong e-mail address or password.";
@@ -110,6 +123,8 @@ const program = new Command()
   .name("picnic-saver")
   .description("Find cheaper alternatives for the products in your Picnic cart and swap them.")
   .option("--env-file <path>", "the .env file that holds the login", ".env")
+  .option("--ignore-file <path>", "the JSON file with products you never want in your cart", "picnic-saver.ignore.json")
+  .option("--no-ignore", "leave the ignore list out for this run")
   .addOption(new Option("--country <code>", "the country of your Picnic account (default: PICNIC_COUNTRY_CODE or DE)").choices(["DE", "NL", "FR"]));
 
 program
@@ -153,8 +168,72 @@ savingsOptions(program.command("apply"))
   .option("--dry-run", "show what would happen without changing the cart")
   .action(async (_options, command: Command) => {
     const options = command.optsWithGlobals<SavingsOptions & ApplyOptions>();
+    await runApply(loggedInSaver(options), findOptions(options), options);
+  });
+
+program
+  .command("clean")
+  .description("remove the products on your ignore list from the cart")
+  .option("--dry-run", "show what would be removed without changing the cart")
+  .option("--json", "print JSON")
+  .action(async (_options, command: Command) => {
+    const options = command.optsWithGlobals<GlobalOptions & { dryRun?: boolean; json?: boolean }>();
     const saver = loggedInSaver(options);
-    await runApply(saver, await saver.findSavings(findOptions(options)), options);
+    if (options.dryRun) {
+      const ignored = (await saver.getCart()).items.filter((item) => item.ignored);
+      if (options.json) return console.log(JSON.stringify({ dryRun: true, wouldRemove: ignored }, null, 2));
+      return console.log(ignored.length > 0 ? formatIgnored(ignored, "Would remove") : "Nothing on your ignore list is in the cart.");
+    }
+    const cleanup = await saver.removeIgnored();
+    if (options.json) return console.log(JSON.stringify(cleanup, null, 2));
+    if (cleanup.removed.length + cleanup.failed.length === 0) return console.log("Nothing on your ignore list is in the cart.");
+    printCleanup(cleanup);
+    console.log(`Total: ${formatTotal(cleanup.previousTotal, cleanup.newTotal)}`);
+  });
+
+const ignore = program.command("ignore").description("manage the list of products you never want in your cart");
+
+ignore
+  .command("list", { isDefault: true })
+  .description("show the ignore list")
+  .option("--json", "print JSON")
+  .action((_options, command: Command) => {
+    const options = command.optsWithGlobals<GlobalOptions & { json?: boolean }>();
+    const path = resolve(options.ignoreFile);
+    const rules = readIgnoreFile(path);
+    if (options.json) return console.log(JSON.stringify({ ignore: rules }, null, 2));
+    if (rules.length === 0) return console.log(`The ignore list is empty. Add a product with: picnic-saver ignore add "Petersilie"`);
+    console.log(style("bold", `Ignore list (${path})`));
+    for (const rule of rules) console.log(`  ${describeIgnoreRule(rule)}${typeof rule !== "string" && rule.note ? style("dim", `  ${rule.note}`) : ""}`);
+  });
+
+ignore
+  .command("add [names...]")
+  .description("ignore products by name (all words must be in the product name) or by product id")
+  .option("--id <id>", "a product id, as shown by 'cart --json'; repeat for more", collect, [])
+  .option("--note <text>", "a note to store with the new entries")
+  .action((names: string[], _options, command: Command) => {
+    const options = command.optsWithGlobals<GlobalOptions & { id?: string[]; note?: string }>();
+    const path = resolve(options.ignoreFile);
+    const note = options.note ? { note: options.note } : {};
+    const additions: IgnoreRule[] = [...names.map((name) => (options.note ? { name, ...note } : name)), ...(options.id ?? []).map((productId) => ({ productId, ...note }))];
+    if (additions.length === 0) throw new PicnicSaverError("Give at least one name or --id.");
+    const { rules, added } = addIgnoreRules(readIgnoreFile(path), additions);
+    writeIgnoreFile(path, rules);
+    console.log(added.length > 0 ? `Added to ${path}: ${added.map(describeIgnoreRule).join(", ")}` : "Already on the ignore list.");
+  });
+
+ignore
+  .command("remove [names...]")
+  .description("take products off the ignore list")
+  .option("--id <id>", "a product id; repeat for more", collect, [])
+  .action((names: string[], _options, command: Command) => {
+    const options = command.optsWithGlobals<GlobalOptions & { id?: string[] }>();
+    const path = resolve(options.ignoreFile);
+    const { rules, removed } = removeIgnoreRules(readIgnoreFile(path), names, options.id ?? []);
+    if (removed.length === 0) return console.log("No such entry on the ignore list.");
+    writeIgnoreFile(path, rules);
+    console.log(`Removed from ${path}: ${removed.map(describeIgnoreRule).join(", ")}`);
   });
 
 program.parseAsync().catch((error: unknown) => {

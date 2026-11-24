@@ -26,6 +26,7 @@ export interface PlanInput {
 
 /** Why a cart line gets no suggestions, or null when it can be compared. */
 export function skipReason(item: CartItem, options: PlanOptions = {}): SkipReason | null {
+  if (item.ignored) return "ignored";
   if (item.isUnavailable) return "unavailable";
   if (item.recipeId && !options.includeRecipeItems) return "recipe";
   if (!item.basePrice) return "no-comparable-size";
@@ -77,6 +78,7 @@ export function buildSavingsPlan({ cart, candidates, products = {}, warnings = [
     lines,
     suggestions,
     duplicates,
+    ignored: cart.items.filter((item) => item.ignored),
     summary: { suggestionIds: [], currentTotal: cart.totalPrice, estimatedTotal: cart.totalPrice, estimatedSaving: 0 },
     warnings,
   };

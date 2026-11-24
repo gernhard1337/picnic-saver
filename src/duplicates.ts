@@ -22,7 +22,7 @@ type Reason = DuplicateGroup["reasons"][number];
  *   only matched by name.
  */
 export function findDuplicates(cart: CartSummary, products: Record<string, ProductInfo> = {}, options: DuplicateOptions = {}): DuplicateGroup[] {
-  const items = cart.items.filter((item) => !item.isUnavailable);
+  const items = cart.items.filter((item) => !item.isUnavailable && !item.ignored);
   const parent = items.map((_, index) => index);
   const find = (index: number): number => (parent[index] === index ? index : (parent[index] = find(parent[index]!)));
   const reasonsByRoot = new Map<number, Set<Reason>>();

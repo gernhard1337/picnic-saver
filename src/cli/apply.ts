@@ -1,9 +1,9 @@
 import { select } from "@inquirer/prompts";
 import { PicnicSaverError, StaleSuggestionError, SwapFailedError } from "../errors.js";
 import { findSuggestion, previewSwaps } from "../savings.js";
-import type { PicnicSaver } from "../saver.js";
-import type { SavingsPlan, SwapOutcome, SwapSuggestion } from "../types.js";
-import { formatPlan, formatPreview, formatSuggestion, money, style } from "./format.js";
+import type { FindSavingsOptions, PicnicSaver } from "../saver.js";
+import type { RemoveIgnoredResult, SavingsPlan, SwapOutcome, SwapSuggestion } from "../types.js";
+import { formatIgnored, formatPlan, formatPreview, formatSuggestion, money, style } from "./format.js";
 
 export interface ApplyOptions {
   all?: boolean;
@@ -53,13 +53,20 @@ function printTotals(before: number, after: number): void {
   console.log(`\nTotal: ${money(before)} → ${style("bold", money(after))} (${effect})`);
 }
 
-async function applySelection(saver: PicnicSaver, plan: SavingsPlan, selected: SwapSuggestion[], options: ApplyOptions): Promise<void> {
+/** Prints what {@link PicnicSaver.removeIgnored} did. */
+export function printCleanup(cleanup: RemoveIgnoredResult): void {
+  if (cleanup.removed.length > 0) console.log(formatIgnored(cleanup.removed, "Removed from your cart (ignore list)"));
+  for (const { item, reason } of cleanup.failed) console.log(`${style("red", "✗")} Could not remove ${item.name}: ${reason}`);
+  if (cleanup.removed.length + cleanup.failed.length > 0) console.log("");
+}
+
+async function applySelection(saver: PicnicSaver, plan: SavingsPlan, selected: SwapSuggestion[], options: ApplyOptions, cleanup: RemoveIgnoredResult | null = null): Promise<void> {
   const preview = previewSwaps(
     plan,
     selected.map((suggestion) => suggestion.id),
   );
   if (options.dryRun) {
-    if (options.json) return console.log(JSON.stringify({ dryRun: true, preview, suggestions: selected }, null, 2));
+    if (options.json) return console.log(JSON.stringify({ dryRun: true, wouldRemove: plan.ignored, preview, suggestions: selected }, null, 2));
     console.log(style("bold", `Would swap ${selected.length} products:`));
     for (const suggestion of selected) console.log(formatSuggestion(suggestion), "\n");
     console.log(formatPreview(preview));
@@ -67,7 +74,7 @@ async function applySelection(saver: PicnicSaver, plan: SavingsPlan, selected: S
   }
 
   const result = await saver.applySwaps(selected);
-  if (options.json) return console.log(JSON.stringify({ preview, result }, null, 2));
+  if (options.json) return console.log(JSON.stringify({ removed: cleanup?.removed ?? [], preview, result }, null, 2));
   printOutcomes(selected, result.outcomes);
   printTotals(result.previousTotal, result.newTotal);
 }
@@ -122,12 +129,20 @@ async function reviewOneByOne(saver: PicnicSaver, plan: SavingsPlan, options: Ap
   printTotals(plan.cart.totalPrice, total);
 }
 
-/** `picnic-saver apply`: shows the plan, then swaps everything at once or asks per suggestion. */
-export async function runApply(saver: PicnicSaver, plan: SavingsPlan, options: ApplyOptions): Promise<void> {
-  if (options.all || options.only) return applySelection(saver, plan, selectSuggestions(plan, options), options);
+/**
+ * `picnic-saver apply`: removes the products on the ignore list, shows the plan, then swaps
+ * everything at once or asks per suggestion.
+ */
+export async function runApply(saver: PicnicSaver, find: FindSavingsOptions, options: ApplyOptions): Promise<void> {
+  const interactive = !options.all && !options.only;
+  if (interactive && options.json) throw new PicnicSaverError("--json needs --all or --only.");
+  if (interactive && !process.stdin.isTTY) throw new PicnicSaverError("Not an interactive terminal. Use --all or --only <ids...>.");
 
-  if (options.json) throw new PicnicSaverError("--json needs --all or --only.");
-  if (!process.stdin.isTTY) throw new PicnicSaverError("Not an interactive terminal. Use --all or --only <ids...>.");
+  // With --dry-run the ignored lines stay in the cart and the plan lists them.
+  const cleanup = options.dryRun || saver.ignore.length === 0 ? null : await saver.removeIgnored();
+  if (cleanup && !options.json) printCleanup(cleanup);
+  const plan = await saver.findSavings(find);
+  if (!interactive) return applySelection(saver, plan, selectSuggestions(plan, options), options, cleanup);
 
   console.log(formatPlan(plan));
   const reviewable = plan.suggestions.length + plan.duplicates.reduce((sum, group) => sum + group.consolidation.length, 0);

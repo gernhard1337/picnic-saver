@@ -2,11 +2,12 @@ import PicnicClient from "picnic-api";
 import { searchSource } from "./alternatives/search.js";
 import { similarProductsSource } from "./alternatives/similar.js";
 import type { AlternativeSource } from "./alternatives/source.js";
-import { applySwap, applySwaps, type ApplySwapsOptions } from "./apply.js";
+import { applySwap, applySwaps, removeIgnored, type ApplySwapsOptions } from "./apply.js";
 import { toCartSummary, toPriceTiers } from "./cart.js";
 import { PicnicSaverError } from "./errors.js";
+import { matchIgnoreRule, type IgnoreRule } from "./ignore.js";
 import { buildSavingsPlan, skipReason, type PlanOptions } from "./savings.js";
-import type { AlternativeCandidate, CartSummary, LoginResult, PicnicClientLike, ProductInfo, SavingsPlan, SwapResult, SwapSuggestion, SwapsResult } from "./types.js";
+import type { AlternativeCandidate, CartSummary, LoginResult, PicnicClientLike, ProductInfo, RemoveIgnoredResult, SavingsPlan, SwapResult, SwapSuggestion, SwapsResult } from "./types.js";
 
 type PicnicProduct = PicnicClient.Types.catalog.Product;
 
@@ -17,6 +18,11 @@ export interface PicnicSaverOptions {
   authKey?: string;
   /** An existing picnic-api client to use instead of creating one. */
   client?: PicnicClientLike;
+  /**
+   * Products that should never be in the cart, e.g. `["Petersilie", { productId: "s1001524" }]`.
+   * They are flagged in the cart and the plan, and {@link PicnicSaver.removeIgnored} removes them.
+   */
+  ignore?: IgnoreRule[];
 }
 
 export interface FindSavingsOptions extends PlanOptions {
@@ -47,7 +53,11 @@ export class PicnicSaver {
    */
   readonly client: PicnicClientLike;
 
+  /** The ignore list. Assign a new list to change it; the next call uses it. */
+  ignore: IgnoreRule[];
+
   constructor(options: PicnicSaverOptions = {}) {
+    this.ignore = options.ignore ?? [];
     this.client = options.client ?? new PicnicClient({ countryCode: options.countryCode ?? "DE", ...(options.authKey && { authKey: options.authKey }) });
   }
 
@@ -86,16 +96,25 @@ export class PicnicSaver {
     this.client.authKey = null;
   }
 
-  /** Returns the cart with its lines and the total to pay. */
+  /** Returns the cart with its lines and the total to pay. Lines on the ignore list have `ignored: true`. */
   async getCart(): Promise<CartSummary> {
-    return toCartSummary(await this.client.cart.getCart());
+    return toCartSummary(await this.client.cart.getCart(), this.ignore);
+  }
+
+  /**
+   * Takes every product on the ignore list out of the cart, also when a recipe put it there.
+   * Nothing else changes the cart on its own: `getCart` and `findSavings` only flag these lines.
+   */
+  async removeIgnored(): Promise<RemoveIgnoredResult> {
+    this.assertLoggedIn();
+    return removeIgnored(this.client, this.ignore);
   }
 
   /**
    * Checks every line of the cart for products that cost less per kilogram, litre or piece, and
    * for lines that are the same kind of product at different prices. Reads the cart and one
    * product page per line (plus a search per line with the `"search"` source); the cart is not
-   * changed.
+   * changed. Lines on the ignore list are not checked and listed in `plan.ignored`.
    *
    * A product page or a source that fails doesn't stop the analysis; it ends up in
    * `plan.warnings`.
@@ -107,7 +126,7 @@ export class PicnicSaver {
     const cart = await this.getCart();
 
     const pages = new Map<string, PicnicProduct>();
-    const productIds = [...new Set(cart.items.filter((item) => !item.isUnavailable).map((item) => item.productId))];
+    const productIds = [...new Set(cart.items.filter((item) => !item.isUnavailable && !item.ignored).map((item) => item.productId))];
     await mapLimit(productIds, concurrency, async (productId) => {
       try {
         pages.set(productId, await this.client.catalog.getProduct(productId));
@@ -123,7 +142,7 @@ export class PicnicSaver {
       for (const source of sources) {
         try {
           const results = await source.find({ item, product: pages.get(item.productId) ?? null, client: this.client });
-          found.push(...results.map((candidate) => ({ ...candidate, source: source.name })));
+          found.push(...results.filter((candidate) => !matchIgnoreRule(candidate, this.ignore)).map((candidate) => ({ ...candidate, source: source.name })));
         } catch (error) {
           warnings.push(`Source "${source.name}" failed for "${item.name}": ${message(error)}`);
         }
@@ -147,7 +166,7 @@ export class PicnicSaver {
    */
   async applySwap(suggestion: SwapSuggestion): Promise<SwapResult> {
     this.assertLoggedIn();
-    return applySwap(this.client, suggestion);
+    return applySwap(this.client, suggestion, { ignore: this.ignore });
   }
 
   /**
@@ -156,7 +175,7 @@ export class PicnicSaver {
    */
   async applySwaps(suggestions: SwapSuggestion[], options?: ApplySwapsOptions): Promise<SwapsResult> {
     this.assertLoggedIn();
-    return applySwaps(this.client, suggestions, options);
+    return applySwaps(this.client, suggestions, { ignore: this.ignore, ...options });
   }
 
   private assertLoggedIn(): void {
