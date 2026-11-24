@@ -48,6 +48,7 @@ describe("selectSuggestions", () => {
       [
         { id: "pasta", name: "Spaghetti", unitQuantity: "500 g", price: 199, similar: ["pasta-own"] },
         { id: "pasta-own", name: "Spaghetti", unitQuantity: "500 g", price: 89 },
+        { id: "pasta-found", name: "Spaghetti", unitQuantity: "500 g", price: 49 },
         { id: "rice", name: "Reis", unitQuantity: "1 kg", price: 300 },
         { id: "rice-cheap", name: "Reis", unitQuantity: "1 kg", price: 200 },
         { id: "milk", name: "Vollmilch", unitQuantity: "1 l", price: 109, similar: ["milk-bio"] },
@@ -56,20 +57,45 @@ describe("selectSuggestions", () => {
       { pasta: 1, rice: 1, milk: 1, "milk-bio": 1 },
     );
     fake.searchResults.set("Reis", ["rice-cheap"]);
+    fake.searchResults.set("Spaghetti", ["pasta-found"]);
     return new PicnicSaver({ client: fake.client }).findSavings();
   }
   const ids = (suggestions: Array<{ id: string }>) => suggestions.map((suggestion) => suggestion.id);
 
-  it("leaves search results and duplicates out of --all", async () => {
+  it("takes the cheapest suggestion per line for --all and leaves search results out", async () => {
+    // The cheapest pasta comes from search, so --all takes the next one.
+    expect((await plan()).lines[0]!.recommended!.id).toBe("pasta:pasta-found");
     expect(ids(selectSuggestions(await plan(), { all: true }))).toEqual(["pasta:pasta-own"]);
   });
 
-  it("adds them on request", async () => {
-    expect(ids(selectSuggestions(await plan(), { all: true, includeSearch: true, consolidate: true }))).toEqual(["pasta:pasta-own", "rice:rice-cheap", "milk-bio:milk"]);
+  it("adds search results and merges on request", async () => {
+    expect(ids(selectSuggestions(await plan(), { all: true, includeSearch: true, consolidate: true }))).toEqual(["pasta:pasta-found", "rice:rice-cheap", "merge:milk-bio:milk"]);
+  });
+
+  it("moves lines onto cheaper products in the cart, and past the ones that are swapped away themselves", async () => {
+    const fake = new FakePicnic(
+      [
+        { id: "small", name: "Kartoffeln", unitQuantity: "1 kg", price: 224, similar: ["medium", "large"] },
+        { id: "medium", name: "Kartoffeln", unitQuantity: "2 kg", price: 260, similar: ["large"] },
+        { id: "large", name: "Kartoffeln", unitQuantity: "2,5 kg", price: 260 },
+        { id: "fancy", name: "Trüffelkartoffeln", unitQuantity: "1 kg", price: 449, similar: ["medium"] },
+        { id: "sweet", name: "Süßkartoffeln", unitQuantity: "1 kg", price: 500, similar: ["fancy"] },
+      ],
+      { small: 1, medium: 1, large: 1, fancy: 1, sweet: 1 },
+    );
+    const saver = new PicnicSaver({ client: fake.client });
+    const selected = selectSuggestions(await saver.findSavings({ sources: ["similar"] }), { all: true });
+    // "fancy" knows only "medium" and "sweet" only "fancy"; both follow them to "large".
+    expect(ids(selected)).toEqual(["small:large", "medium:large", "fancy:large", "sweet:large"]);
+    expect(selected[3]).toMatchObject({ to: { quantity: 1, linePrice: 260, alreadyInCart: true }, linePriceDelta: -240 });
+
+    const result = await saver.applySwaps(selected);
+    expect(result.outcomes.map((outcome) => outcome.status)).toEqual(["applied", "applied", "applied", "applied"]);
+    expect([...fake.quantities]).toEqual([["large", 5]]);
   });
 
   it("resolves --only ids and rejects unknown ones", async () => {
-    expect(ids(selectSuggestions(await plan(), { only: ["milk-bio:milk"] }))).toEqual(["milk-bio:milk"]);
+    expect(ids(selectSuggestions(await plan(), { only: ["merge:milk-bio:milk"] }))).toEqual(["merge:milk-bio:milk"]);
     await expect(plan().then((result) => selectSuggestions(result, { only: ["x"] }))).rejects.toThrow(/Unknown suggestion "x"/);
   });
 });

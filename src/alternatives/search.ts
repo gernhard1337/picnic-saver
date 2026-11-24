@@ -1,12 +1,13 @@
 import { toPriceTiers } from "../cart.js";
 import { nameOverlap } from "../names.js";
 import type { AlternativeCandidate } from "../types.js";
-import type { AlternativeSource } from "./source.js";
+import type { AlternativeContext, AlternativeSource } from "./source.js";
 
 export interface SearchSourceOptions {
   /**
-   * The share of the words in the item's name a search result must have in its own name, from 0
-   * to 1. Keeps "Hafermilch" out of the results for "Vollmilch". Default: 0.5.
+   * The share of words the name of the item and the name of a search result must have in common,
+   * from 0 to 1, measured both ways. Keeps "Hafermilch" and "Kartoffelbrei mit Blattspinat" out
+   * of the results for "Vollmilch" and "Blattspinat". Default: 0.5.
    */
   minNameOverlap?: number;
   /** The most candidates to return per item. Default: 10. */
@@ -21,16 +22,19 @@ export interface SearchSourceOptions {
 export function searchSource(options: SearchSourceOptions = {}): AlternativeSource {
   const minNameOverlap = options.minNameOverlap ?? 0.5;
   const maxCandidates = options.maxCandidates ?? 10;
+  // Several cart lines often share a name; each name is searched once.
+  const searches = new Map<string, ReturnType<AlternativeContext["client"]["catalog"]["getSearchResults"]>>();
   return {
     name: "search",
     async find({ item, product, client }) {
       const query = product?.name ?? item.name;
-      const results = await client.catalog.getSearchResults(query);
+      if (!searches.has(query)) searches.set(query, client.catalog.getSearchResults(query));
+      const results = await searches.get(query)!;
       const candidates = new Map<string, AlternativeCandidate>();
       for (const section of results.products?.sections ?? []) {
         for (const tile of section.products) {
           if (tile.isUnavailable || tile.id === item.productId || candidates.has(tile.id)) continue;
-          if (nameOverlap(query, tile.name) < minNameOverlap) continue;
+          if (Math.min(nameOverlap(query, tile.name), nameOverlap(tile.name, query)) < minNameOverlap) continue;
           candidates.set(tile.id, {
             productId: tile.id,
             name: tile.brand ? `${tile.brand} ${tile.name}` : tile.name,

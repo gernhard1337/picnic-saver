@@ -56,7 +56,8 @@ export function formatSuggestion(suggestion: SwapSuggestion): string {
 }
 
 export function formatDuplicate(group: DuplicateGroup): string {
-  const names = group.items.map((item) => `"${item.name}" (${item.unitQuantity}${item.basePrice ? `, ${basePrice(item.basePrice)}` : ""})`);
+  // A product on two lines (in two recipes) is named once.
+  const names = [...new Set(group.items.map((item) => `"${item.name}" (${item.unitQuantity}${item.basePrice ? `, ${basePrice(item.basePrice)}` : ""})`))];
   const list = names.length > 2 ? `${names.slice(0, -1).join(", ")} and ${names.at(-1)}` : names.join(" and ");
   const what = group.basePriceSpread ? "are the same kind of product at different prices" : "look like the same kind of product";
   const lines = [`  ${style("yellow", "!")} ${list} ${what}.`];

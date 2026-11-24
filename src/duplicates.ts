@@ -5,7 +5,7 @@ import type { AlternativeCandidate, CartItem, CartSummary, DuplicateGroup, Dupli
 export interface DuplicateOptions {
   /** The least a product must cost less per unit to be offered for consolidation, in cents. Default: 1. */
   minSavingPerUnit?: number;
-  /** Also offer to consolidate lines that belong to a recipe. Default: false. */
+  /** Also offer to consolidate lines that belong to a recipe. Default: true. */
   includeRecipeItems?: boolean;
 }
 
@@ -13,9 +13,11 @@ type Reason = DuplicateGroup["reasons"][number];
 
 /**
  * Finds cart lines that are the same kind of product at different prices, e.g. milk and organic
- * milk. Two lines are linked when Picnic lists one product as similar to the other, or when
- * their names are equal apart from words such as "Bio". Each group comes with suggestions that
- * move the more expensive lines onto the cheapest product.
+ * milk, or the same potatoes in two package sizes. Two lines are linked when their names are
+ * equal apart from the brand and words such as "Bio"; Picnic listing one as similar to the other
+ * raises the confidence, but is not enough on its own, because Picnic's similar products include
+ * other kinds of product. Each group comes with suggestions that move the more expensive lines
+ * onto the cheapest product.
  *
  * @param cart The cart.
  * @param products The product pages of the cart's products, by product id. Lines without one are
@@ -52,15 +54,13 @@ export function findDuplicates(cart: CartSummary, products: Record<string, Produ
 
 function linkReasons(a: CartItem, b: CartItem, products: Record<string, ProductInfo>): Reason[] {
   if (a.productId === b.productId) return [];
-  const reasons: Reason[] = [];
-  const similar = products[a.productId]?.similarProductIds.includes(b.productId) || products[b.productId]?.similarProductIds.includes(a.productId);
-  if (similar) reasons.push("similar-products");
-
   const sameUnit = !a.packageSize || !b.packageSize || a.packageSize.unit === b.packageSize.unit;
   const keyA = nameKey(products[a.productId]?.name ?? a.name);
   const keyB = nameKey(products[b.productId]?.name ?? b.name);
-  if (sameUnit && keyA !== "" && keyA === keyB) reasons.push("name-match");
-  return reasons;
+  if (!sameUnit || keyA === "" || keyA !== keyB) return [];
+
+  const similar = products[a.productId]?.similarProductIds.includes(b.productId) || products[b.productId]?.similarProductIds.includes(a.productId);
+  return similar ? ["similar-products", "name-match"] : ["name-match"];
 }
 
 function buildGroup(members: CartItem[], reasons: Reason[], cart: CartSummary, products: Record<string, ProductInfo>, options: DuplicateOptions): DuplicateGroup | null {
@@ -76,14 +76,14 @@ function buildGroup(members: CartItem[], reasons: Reason[], cart: CartSummary, p
     const target = consolidationTarget(cheapest, products[cheapest.productId]);
     const quantityInCart = cart.items.filter((item) => item.productId === cheapest.productId).reduce((sum, item) => sum + item.quantity, 0);
     for (const item of comparable.slice(1)) {
-      if (item.recipeId && !options.includeRecipeItems) continue;
+      if (item.recipeId && options.includeRecipeItems === false) continue;
       const suggestion = buildSuggestion({ kind: "consolidate", item, candidate: target, quantityInCart, minSavingPerUnit: options.minSavingPerUnit ?? 1 });
       if (suggestion) consolidation.push(suggestion);
     }
   }
 
   return {
-    id: sorted.map((item) => item.productId).join("+"),
+    id: [...new Set(sorted.map((item) => item.productId))].join("+"),
     confidence: reasons.length > 1 ? "high" : "medium",
     reasons,
     items: sorted.map(

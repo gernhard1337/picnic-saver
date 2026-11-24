@@ -28,17 +28,17 @@ picnic-saver logout
 
 `apply` shows the plan and then asks once: swap all, review one by one, or cancel. In the review you answer yes, no or "skip the rest" per suggestion; every yes is applied immediately and the new total is shown.
 
-"Swap all" and `--all` only take suggestions from the similar products Picnic lists. Suggestions from search results and the consolidation of duplicates are offered in the review, or added with flags:
+"Swap all" and `--all` take the cheapest suggestion of every cart line, whether the cheaper product is in your cart already or not. Suggestions from search results are left out; they are offered in the review or added with `--include-search`. A line is never moved onto a product that is swapped away in the same run; it goes where that product goes. With three sizes of the same potatoes in the cart, the two more expensive ones both end up on the cheapest.
 
 | Flag | Effect |
 | --- | --- |
 | `--all` | Swap all suggestions without asking. |
 | `--only <ids...>` | Swap only these suggestions; the ids are shown in brackets by `savings`. |
 | `--include-search` | Let `--all` also swap suggestions from search results. |
-| `--consolidate` | Let `--all` also move duplicates onto the cheapest product. |
+| `--consolidate` | Let `--all` also use the suggestions that merge duplicates. |
 | `--dry-run` | Show what would happen without changing the cart. |
 | `--no-search` | Don't search; only use the similar products Picnic lists. |
-| `--include-recipes` | Also check products that belong to a recipe (swapping removes them from the recipe). |
+| `--no-recipes` | Leave products that belong to a recipe as they are. By default they are checked like any other; swapping one takes it out of the recipe in the cart. |
 | `--json` | Print JSON (`cart`, `savings`, and `apply` with `--all` or `--only`). |
 | `--ignore-file <path>` | The ignore list to use. Default: `picnic-saver.ignore.json` in the current directory. |
 | `--no-ignore` | Leave the ignore list out for this run. |
@@ -142,7 +142,7 @@ Only `removeIgnored()` changes the cart; `getCart()` and `findSavings()` just fl
 | Field | Content |
 | --- | --- |
 | `cart` | The cart the plan was made for. |
-| `lines` | One entry per cart line: all its `suggestions` (cheapest per unit first), the `recommended` one, or why it was `skipped`. |
+| `lines` | One entry per cart line: all its `suggestions` (cheapest per unit first), the `recommended` one (the cheapest), or why it was `skipped`. |
 | `suggestions` | The recommended suggestion of every line that has one. |
 | `ignored` | The cart lines on the ignore list. |
 | `duplicates` | Groups of lines that are the same kind of product at different prices, each with `consolidation` suggestions. |
@@ -156,9 +156,11 @@ A `SwapSuggestion` says what is replaced (`from`), by what and in which quantity
 - **Cheaper means cheaper per unit.** A product is suggested when it costs less per kilogram, litre or piece than what you pay for the cart line now. Only products in the same unit are compared; lines without a weight, volume or piece count ("24 Waschladungen") are skipped.
 - **The quantity covers what you had.** 2 × 500 g becomes 1 × 1 kg; 3 × 400 g becomes 2 × 1 kg. Quantity discounts are included.
 - **A cheaper unit price can still cost more.** When the cheaper product only comes in a larger package, the line gets more expensive. Such suggestions have `increasesLinePrice: true`, and the estimated total includes the increase. Filter on `linePriceDelta < 0` if you only want swaps that lower the total.
-- **Two sources.** `"similar"` are the similar products on Picnic's product page. `"search"` are search results for the product name, filtered by name; they find more, but can be a different kind of product, so the recommendation prefers other sources and the CLI never swaps them unasked.
-- **Duplicates.** Two cart lines are a duplicate when Picnic lists one as similar to the other, or when their names are equal apart from words such as "Bio". `confidence` is `"high"` when both hold. A product that is already in the cart is never suggested as an alternative; it appears in `duplicates`, and applying its `consolidation` raises the quantity of the cheaper line.
-- **Recipes.** Lines that belong to a recipe are skipped unless you pass `includeRecipeItems: true`.
+- **Two sources.** `"similar"` are the similar products on Picnic's product page; there are usually only a few, and they can be another kind of product (regular potatoes for sweet potatoes). `"search"` are search results for the product name, kept when the names share at least half of their words; they find most of the alternatives, but can be off as well ("mehligkochend" for "festkochend"). Check `source` and the names before you swap; the CLI never swaps search results unasked.
+- **Products in the cart count too.** A cheaper product that is already in the cart is suggested like any other, with `to.alreadyInCart: true`; applying it raises the quantity of that line.
+- **Duplicates.** Two cart lines are a duplicate when their names are equal apart from the brand and words such as "Bio": milk and organic milk, or the same potatoes in two package sizes. `confidence` is `"high"` when Picnic also lists one as similar to the other. Each group has `consolidation` suggestions (`kind: "consolidate"`, ids starting with `merge:`) that move the more expensive lines onto the cheapest product; they can describe the same swap as a line's own suggestion.
+- **A product on several lines.** A product that is in the cart on its own and in recipes has one line each. picnic-api reports the product's total quantity on all of them; the library splits it over the lines by their prices.
+- **Recipes.** Lines that belong to a recipe are checked like any other; swapping one takes the product out of the recipe in the cart. Pass `includeRecipeItems: false` to leave recipes as they are.
 
 ### Options for `findSavings`
 
@@ -168,8 +170,8 @@ A `SwapSuggestion` says what is replaced (`from`), by what and in which quantity
 | `minSavingPerUnit` | `1` | The least an alternative must cost less per unit, in cents. |
 | `maxSuggestionsPerLine` | `5` | The most suggestions kept per line. |
 | `maxSearchSuggestionsPerLine` | `3` | The most suggestions from search kept per line. |
-| `includeRecipeItems` | `false` | Also check lines that belong to a recipe. |
-| `concurrency` | `4` | Requests to Picnic at the same time. |
+| `includeRecipeItems` | `true` | Also check lines that belong to a recipe. |
+| `concurrency` | `2` | Cart lines looked up at the same time. Picnic throttles clients that ask too fast. |
 
 A custom source proposes candidates; whether they are cheaper is decided for you:
 
@@ -204,6 +206,7 @@ Picnic has no "swap" and no dry run. `applySwap(suggestion)` adds the new produc
 ## Limits
 
 - **Totals before a swap are estimates.** They use list prices and quantity discounts. Promotions on the new product and deposit differences only show once the product is in the cart; `applySwap` returns the real total.
+- **Picnic throttles.** An analysis costs one to three requests per cart line. After a few runs on a large cart in a short time Picnic refuses requests for some minutes (status 403). `findSavings` then stops asking, returns what it has and says so in `warnings`.
 - **The API is unofficial.** Picnic can change it at any time; this library then depends on an update of picnic-api.
 - **"Similar" is Picnic's judgement.** A similar product can differ in taste, brand or quality. The library compares prices, not products.
 

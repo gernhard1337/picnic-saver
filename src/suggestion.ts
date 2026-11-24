@@ -35,7 +35,7 @@ export function buildSuggestion({ kind, item, candidate, quantityInCart, minSavi
 
   const linePriceDelta = cost - item.linePrice;
   return {
-    id: `${item.productId}:${candidate.productId}`,
+    id: `${kind === "consolidate" ? "merge:" : ""}${item.productId}:${candidate.productId}`,
     kind,
     source: candidate.source,
     from: {

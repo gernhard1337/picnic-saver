@@ -137,8 +137,8 @@ export interface SwapSuggestion {
   /** Unique within its plan. */
   id: string;
   /**
-   * `"alternative"` swaps to a product that isn't in the cart; `"consolidate"` moves a duplicate
-   * onto the cheapest product of its {@link DuplicateGroup}.
+   * `"alternative"` is a cheaper product for one cart line; `"consolidate"` moves a duplicate
+   * onto the cheapest product of its {@link DuplicateGroup}. The two can describe the same swap.
    */
   kind: "alternative" | "consolidate";
   source: SuggestionSource;
@@ -165,10 +165,7 @@ export interface LineSavings {
   skipped: SkipReason | null;
   /** All suggestions, cheapest per unit first. */
   suggestions: SwapSuggestion[];
-  /**
-   * The suggestion to show first: the cheapest one from a source other than `"search"`, or the
-   * cheapest search result when there is no other. Null without suggestions.
-   */
+  /** The cheapest suggestion per unit, or null without suggestions. */
   recommended: SwapSuggestion | null;
 }
 
@@ -189,8 +186,8 @@ export interface DuplicateItem {
 export interface DuplicateGroup {
   id: string;
   /**
-   * `"high"` when Picnic lists the products as similar and their names match, `"medium"` when
-   * only one of the two holds.
+   * `"high"` when the names match and Picnic lists the products as similar, `"medium"` when only
+   * the names match.
    */
   confidence: "high" | "medium";
   /** What links the lines. */

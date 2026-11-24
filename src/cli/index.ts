@@ -93,12 +93,13 @@ async function logout(options: GlobalOptions): Promise<void> {
 
 interface SavingsOptions extends GlobalOptions {
   search: boolean;
-  includeRecipes?: boolean;
+  /** False with --no-recipes. */
+  recipes: boolean;
   json?: boolean;
 }
 
 function findOptions(options: SavingsOptions): FindSavingsOptions {
-  return { sources: options.search ? ["similar", "search"] : ["similar"], includeRecipeItems: options.includeRecipes };
+  return { sources: options.search ? ["similar", "search"] : ["similar"], includeRecipeItems: options.recipes };
 }
 
 function collect(value: string, previous: string[]): string[] {
@@ -149,7 +150,7 @@ program
   });
 
 const savingsOptions = (command: Command): Command =>
-  command.option("--no-search", "only use the similar products Picnic lists, no search results").option("--include-recipes", "also check products that belong to a recipe").option("--json", "print JSON");
+  command.option("--no-search", "only use the similar products Picnic lists, no search results").option("--no-recipes", "leave products that belong to a recipe as they are").option("--json", "print JSON");
 
 savingsOptions(program.command("savings"))
   .description("show cheaper alternatives, duplicates and the estimated new total; changes nothing")
@@ -161,10 +162,10 @@ savingsOptions(program.command("savings"))
 
 savingsOptions(program.command("apply"))
   .description("swap products for cheaper alternatives: all at once, or asked one by one")
-  .option("--all", "swap all suggestions without asking (leaves out search results and duplicates)")
+  .option("--all", "swap the cheapest suggestion of every product without asking (leaves out search results)")
   .option("--only <ids...>", "swap only the suggestions with these ids, without asking")
   .option("--include-search", "let --all also swap suggestions that come from search results")
-  .option("--consolidate", "let --all also move duplicates onto the cheapest product")
+  .option("--consolidate", "let --all also use the suggestions that merge duplicates")
   .option("--dry-run", "show what would happen without changing the cart")
   .action(async (_options, command: Command) => {
     const options = command.optsWithGlobals<SavingsOptions & ApplyOptions>();

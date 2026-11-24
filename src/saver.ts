@@ -32,7 +32,7 @@ export interface FindSavingsOptions extends PlanOptions {
    * {@link AlternativeSource}. Default: `["similar", "search"]`.
    */
   sources?: Array<"similar" | "search" | AlternativeSource>;
-  /** How many requests to Picnic run at the same time. Default: 4. */
+  /** How many cart lines are looked up at the same time. Picnic throttles clients that ask too fast. Default: 2. */
   concurrency?: number;
 }
 
@@ -114,41 +114,58 @@ export class PicnicSaver {
    * Checks every line of the cart for products that cost less per kilogram, litre or piece, and
    * for lines that are the same kind of product at different prices. Reads the cart and one
    * product page per line (plus a search per line with the `"search"` source); the cart is not
-   * changed. Lines on the ignore list are not checked and listed in `plan.ignored`.
+   * changed. Lines on the ignore list are not checked and listed in `plan.ignored`. The same
+   * goes for the product pages of skipped lines (recipes with `includeRecipeItems: false`), to
+   * keep the number of requests down; duplicates among those are matched by their names in the cart.
    *
    * A product page or a source that fails doesn't stop the analysis; it ends up in
-   * `plan.warnings`.
+   * `plan.warnings`. When Picnic starts to refuse requests because there were too many, the
+   * analysis stops asking and returns what it has, with a warning.
    */
   async findSavings(options: FindSavingsOptions = {}): Promise<SavingsPlan> {
     const sources = (options.sources ?? ["similar", "search"]).map((source) => (source === "similar" ? similarProductsSource() : source === "search" ? searchSource() : source));
-    const concurrency = options.concurrency ?? 4;
+    const concurrency = options.concurrency ?? 2;
     const warnings: string[] = [];
     const cart = await this.getCart();
 
+    const eligible = cart.items.filter((item) => skipReason(item, options) === null);
+
+    // Once Picnic throttles, every further request fails and keeps the block up, so stop asking.
+    let throttled = false;
+    const failed = (what: string, error: unknown) => {
+      if (isThrottled(error)) throttled = true;
+      else warnings.push(`${what}: ${message(error)}`);
+    };
+
     const pages = new Map<string, PicnicProduct>();
-    const productIds = [...new Set(cart.items.filter((item) => !item.isUnavailable && !item.ignored).map((item) => item.productId))];
-    await mapLimit(productIds, concurrency, async (productId) => {
+    await mapLimit([...new Set(eligible.map((item) => item.productId))], concurrency, async (productId) => {
+      if (throttled) return;
       try {
         pages.set(productId, await this.client.catalog.getProduct(productId));
       } catch (error) {
-        warnings.push(`Could not read the product page of ${productId}: ${message(error)}`);
+        failed(`Could not read the product page of ${productId}`, error);
       }
     });
 
     const candidates: Record<string, AlternativeCandidate[]> = {};
-    const eligible = cart.items.filter((item) => skipReason(item, options) === null);
+    let checked = 0;
     await mapLimit(eligible, concurrency, async (item) => {
       const found: AlternativeCandidate[] = [];
       for (const source of sources) {
+        if (throttled) break;
         try {
           const results = await source.find({ item, product: pages.get(item.productId) ?? null, client: this.client });
           found.push(...results.filter((candidate) => !matchIgnoreRule(candidate, this.ignore)).map((candidate) => ({ ...candidate, source: source.name })));
         } catch (error) {
-          warnings.push(`Source "${source.name}" failed for "${item.name}": ${message(error)}`);
+          failed(`Source "${source.name}" failed for "${item.name}"`, error);
         }
       }
+      if (!throttled) checked++;
       candidates[item.lineId] = found;
     });
+    if (throttled) {
+      warnings.push(`Picnic started to refuse requests (too many in a short time), so only ${checked} of ${eligible.length} products were checked completely. Wait a few minutes and try again.`);
+    }
 
     const products: Record<string, ProductInfo> = {};
     for (const [productId, page] of pages) products[productId] = toProductInfo(page);
@@ -197,7 +214,14 @@ function toProductInfo(page: PicnicProduct): ProductInfo {
   };
 }
 
+/** Picnic's edge answers a throttled client with a 403 and an HTML page, so without an error code. */
+function isThrottled(error: unknown): boolean {
+  return PicnicClient.isPicnicApiError(error) && error.code === null && (error.status === 403 || error.status === 429);
+}
+
 function message(error: unknown): string {
+  // The message of a PicnicApiError includes the whole response body.
+  if (PicnicClient.isPicnicApiError(error)) return `Picnic answered with status ${error.status}${error.code ? ` (${error.code})` : ""}`;
   return error instanceof Error ? error.message : String(error);
 }
 

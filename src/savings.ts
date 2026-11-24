@@ -10,7 +10,10 @@ export interface PlanOptions {
   maxSuggestionsPerLine?: number;
   /** The most suggestions from the `"search"` source to keep per cart line. Default: 3. */
   maxSearchSuggestionsPerLine?: number;
-  /** Also suggest swaps for lines that belong to a recipe; swapping removes them from the recipe. Default: false. */
+  /**
+   * Also suggest swaps for lines that belong to a recipe. Swapping such a line takes the product
+   * out of the recipe in the cart. Set to false to leave recipes as they are. Default: true.
+   */
   includeRecipeItems?: boolean;
 }
 
@@ -28,7 +31,7 @@ export interface PlanInput {
 export function skipReason(item: CartItem, options: PlanOptions = {}): SkipReason | null {
   if (item.ignored) return "ignored";
   if (item.isUnavailable) return "unavailable";
-  if (item.recipeId && !options.includeRecipeItems) return "recipe";
+  if (item.recipeId && options.includeRecipeItems === false) return "recipe";
   if (!item.basePrice) return "no-comparable-size";
   return null;
 }
@@ -39,11 +42,12 @@ export function skipReason(item: CartItem, options: PlanOptions = {}): SkipReaso
  *
  * A candidate becomes a suggestion when it costs less per kilogram, litre or piece than what is
  * paid for the cart line now. Its quantity is the fewest packages that hold at least the amount
- * of the line. Products that are in the cart already are never suggested as an alternative; they
- * show up under `duplicates`.
+ * of the line. A cheaper product that is in the cart already is suggested too, with
+ * `to.alreadyInCart: true`; applying it raises the quantity of that line.
  */
 export function buildSavingsPlan({ cart, candidates, products = {}, warnings = [], options = {} }: PlanInput): SavingsPlan {
-  const inCart = new Set(cart.items.map((item) => item.productId));
+  const inCart = new Map<string, number>();
+  for (const item of cart.items) inCart.set(item.productId, (inCart.get(item.productId) ?? 0) + item.quantity);
   const usedIds = new Set<string>();
   const uniqueId = (suggestion: SwapSuggestion): SwapSuggestion => {
     let id = suggestion.id;
@@ -59,15 +63,14 @@ export function buildSavingsPlan({ cart, candidates, products = {}, warnings = [
     const seen = new Set<string>();
     let searchCount = 0;
     const suggestions = (candidates[item.lineId] ?? [])
-      .filter((candidate) => !inCart.has(candidate.productId) && !seen.has(candidate.productId) && seen.add(candidate.productId))
-      .flatMap((candidate) => buildSuggestion({ kind: "alternative", item, candidate, quantityInCart: 0, minSavingPerUnit: options.minSavingPerUnit ?? 1 }) ?? [])
+      .filter((candidate) => !seen.has(candidate.productId) && seen.add(candidate.productId))
+      .flatMap((candidate) => buildSuggestion({ kind: "alternative", item, candidate, quantityInCart: inCart.get(candidate.productId) ?? 0, minSavingPerUnit: options.minSavingPerUnit ?? 1 }) ?? [])
       .sort(byCheapest)
       .filter((suggestion) => suggestion.source !== "search" || ++searchCount <= (options.maxSearchSuggestionsPerLine ?? 3))
       .slice(0, options.maxSuggestionsPerLine ?? 5)
       .map(uniqueId);
 
-    const recommended = suggestions.find((suggestion) => suggestion.source !== "search") ?? suggestions[0] ?? null;
-    return { item, skipped: null, suggestions, recommended };
+    return { item, skipped: null, suggestions, recommended: suggestions[0] ?? null };
   });
 
   const duplicates = findDuplicates(cart, products, options).map((group) => ({ ...group, consolidation: group.consolidation.map(uniqueId) }));

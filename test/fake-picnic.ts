@@ -23,6 +23,8 @@ export class FakePicnic {
   failAdd = false;
   failRemove: "never" | "once" | "always" = "never";
   failProductPages = new Set<string>();
+  /** Thrown by every search from the given call on. */
+  failSearches: { from: number; error: Error } | null = null;
   /** Fees and deposits on top of the lines. */
   extras = 0;
   authKey: string | null = "key";
@@ -134,6 +136,7 @@ export class FakePicnic {
         },
         getSearchResults: async (query: string) => {
           fake.calls.push(`search ${query}`);
+          if (fake.failSearches && fake.calls.filter((call) => call.startsWith("search ")).length >= fake.failSearches.from) throw fake.failSearches.error;
           const products = (fake.searchResults.get(query) ?? []).map((id) => {
             const product = fake.product(id);
             return {
